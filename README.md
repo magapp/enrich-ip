@@ -39,9 +39,8 @@ For example, you have a text file with IP-adresses, like this:
 The output would be a CSV file like this:
 
 ```
-+-----------------+-----------------+-----------------------------------+-----------+----------------------------------+--------+---------------------------------+-----------+-------------+----------------------------------------+---------+-------------+---------------+---------------+
 | IP              | IP-Country      | IP-City                           | IP-Type   | IP-AS-ORG                        | IP-ASN | IP-ISP                          | IP-DOMAIN | DNSBL-Count | Hostname                               | Banners | Abuse-Score | Abuse-Reports | Abuse-Country |
-+-----------------+-----------------+-----------------------------------+-----------+----------------------------------+--------+---------------------------------+-----------+-------------+----------------------------------------+---------+-------------+---------------+---------------+
+|-----------------|-----------------|-----------------------------------|-----------|----------------------------------|--------|---------------------------------|-----------|-------------|----------------------------------------|---------|-------------|---------------|---------------|
 | 195.26.255.37   | United States   | St Louis                          | Corporate | Contabo Inc.                     | 40021  | Contabo Inc.                    |           | 0           | ip-37-255-26-195.static.contabo.net    |         | 0           | 0             | US            |
 | 216.244.66.250  | United States   | Tukwila (Riverton-Boulevard Park) | Corporate | Wowrack.com                      | 23033  | Wowrack.com                     |           | 0           |                                        |         | 93          | 245           | US            |
 | 89.21.85.26     | Indonesia       | Cibinong                          | Corporate | CV Andhika Pratama Sanggoro      | 141892 | CV Andhika Pratama Sanggoro     |           | 0           |                                        |         | 90          | 89            | ID            |
@@ -62,8 +61,6 @@ The output would be a CSV file like this:
 | 149.88.23.89    | Singapore       | Singapore                         | Corporate | Datacamp Limited                 | 212238 | Datacamp Limited                |           | 1           | unn-149-88-23-89.datapacket.com        |         | 48          | 84            | SG            |
 | 4.223.174.255   | Sweden          | Gävle                             | Corporate | Microsoft Corporation            | 8075   | Microsoft Corporation           |           | 0           |                                        |         | 0           | 0             | SE            |
 | 185.223.152.104 | United States   | Los Angeles                       | Cellular  | Latitude.sh                      | 396356 | Latitude.sh                     |           | 0           |                                        |         | 100         | 127           | US            |
-+-----------------+-----------------+-----------------------------------+-----------+----------------------------------+--------+---------------------------------+-----------+-------------+----------------------------------------+---------+-------------+---------------+---------------+
-
 ```
 
 You can also supply a CSV file with columns, then enrich-ip will add more columns. Note that input CSV file must have its first line as a header row. This is useful, for example, if you have a CSV file generated from another tool with IP adress and text or log info. More columns will be added. Enrich-ip will automatically detect if the input file is a text file or CSV file.
