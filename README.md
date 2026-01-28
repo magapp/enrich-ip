@@ -11,7 +11,7 @@ IP-DB is a database that is downloaded locally so with this one you can probe as
 
 Also note that some of the services requires an API-key.
 
-For example, you have a text file with IP-adresses, like this:
+For example, you have a text file with IP-adresses, like this (you may need to scroll to the right to see the whole table):
 
 ```
 195.26.255.37
