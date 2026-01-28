@@ -68,7 +68,7 @@ You can also supply a CSV file with columns, then enrich-ip will add more column
 - [IP-DB](https://ip-db.com/): Geolocation data (country, city, ASN, ISP, domain)
 - [DNSBL](https://dnsbl.info):: Check if IP is listed in DNS blacklists
 - [ipinfo.io](http://ipinfo.io): Get hostname for IP
-- [DNSDumpster](https://dnsdumpster.com): Get services that is running on IP etc.
+- [DNSDumpster](https://dnsdumpster.com): Get services that is running on IP, for example, Apache, Nginx, SSH etc.
 - [AbuseIPDB](https://www.abuseipdb.com): Get abuse score and report nbr of occurencies the IP have
 - [KML Export](https://earth.google.com): Generate Google Earth compatible KML file with coordinates of all IPs in list
 
