@@ -1,0 +1,13 @@
+services:
+  enrich-ip:
+    build: .
+    volumes:
+      # Mount input/output directory
+      - ./data:/data
+      # Mount API key cache files from host (optional)
+      - ~/.enrichip-ip-db-key:/root/.enrichip-ip-db-key:ro
+      - ~/.enrichip-dnsdumpster-key:/root/.enrichip-dnsdumpster-key:ro
+      - ~/.enrichip-abuseipdb-key:/root/.enrichip-abuseipdb-key:ro
+      - ~/.ip-db-full.mmdb:/root/.ip-db-full.mmdb:ro
+    # Example command - override with your own arguments
+    # command: ["--input-file", "/data/input.csv", "--use-ip-db", "--use-dnsbl"]
