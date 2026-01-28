@@ -11,7 +11,7 @@ IP-DB is a database that is downloaded locally so with this one you can probe as
 
 Also note that some of the services requires an API-key.
 
-For example, you have a text file with IP-adresses, like this (you may need to scroll to the right to see the whole table):
+For example, you have a text file with IP-adresses, like this:
 
 ```
 195.26.255.37
@@ -36,7 +36,7 @@ For example, you have a text file with IP-adresses, like this (you may need to s
 185.223.152.104
 ```
 
-The output would be a CSV file like this:
+The output would be a CSV file like this  (you may need to scroll to the right to see the whole table):
 
 | IP              | IP-Country      | IP-City                           | IP-Type   | IP-AS-ORG                        | IP-ASN | IP-ISP                          | IP-DOMAIN | DNSBL-Count | Hostname                               | Banners | Abuse-Score | Abuse-Reports | Abuse-Country |
 |-----------------|-----------------|-----------------------------------|-----------|----------------------------------|--------|---------------------------------|-----------|-------------|----------------------------------------|---------|-------------|---------------|---------------|
