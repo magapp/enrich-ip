@@ -16,6 +16,7 @@ IP_DB_KEY_FILE = Path.home() / ".enrichip-ip-db-key"
 IP_DB_FILE = Path.home() / ".ip-db-full.mmb"
 DNSDUMPSTER_KEY_FILE = Path.home() / ".enrichip-dnsdumpster-key"
 ABUSEIPDB_KEY_FILE = Path.home() / ".enrichip-abuseipdb-key"
+PROXYCHECK_KEY_FILE = Path.home() / ".enrichip-proxycheck-key"
 
 def parse_args():
     """Parse command line arguments."""
@@ -37,6 +38,8 @@ def parse_args():
     parser.add_argument( "--use-ipinfo", action="store_true", default=False, help="Use ipinfo.io API to get hostname")
     parser.add_argument( "--use-abuseipdb", action="store_true", default=False, help="Use AbuseIPDB API for enrichment")
     parser.add_argument( "--abuseipdb-api", type=str, help="API key for AbuseIPDB")
+    parser.add_argument( "--use-proxycheck", action="store_true", default=False, help="Use proxycheck.io API for proxy/VPN detection")
+    parser.add_argument( "--proxycheck-api", type=str, help="API key for proxycheck.io")
     return parser.parse_args()
 
 def main():
@@ -72,6 +75,17 @@ def main():
             print("Retrieving AbuseIPDB key from cache...")
         else:
             print("Error: --use-abuseipdb requires --abuseipdb-api", file=sys.stderr)
+            sys.exit(1)
+
+    if args.use_proxycheck:
+        if args.proxycheck_api:
+            PROXYCHECK_KEY_FILE.write_text(args.proxycheck_api)
+            print("Storing proxycheck.io key to cache...")
+        elif PROXYCHECK_KEY_FILE.exists():
+            args.proxycheck_api = PROXYCHECK_KEY_FILE.read_text().strip()
+            print("Retrieving proxycheck.io key from cache...")
+        else:
+            print("Error: --use-proxycheck requires --proxycheck-api", file=sys.stderr)
             sys.exit(1)
 
     # Load IP-DB database
@@ -138,6 +152,12 @@ def main():
         abuseipdb_headers = ["Abuse-Score", "Abuse-Reports", "Abuse-Country"]
         csv_output_header = (csv_output_header + args.csv_delimiter_output +
                              args.csv_delimiter_output.join(abuseipdb_headers))
+
+    # If using proxycheck.io, add headers:
+    if args.use_proxycheck:
+        proxycheck_headers = ["Proxy", "Proxy-Type", "Proxy-Risk", "Proxy-Country", "Proxy-ASN", "Proxy-Provider"]
+        csv_output_header = (csv_output_header + args.csv_delimiter_output +
+                             args.csv_delimiter_output.join(proxycheck_headers))
 
     # Write header to output file
     if csv_output_header:
@@ -234,6 +254,17 @@ def main():
             else:
                 line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(["", "", ""])
 
+        # Lookup IP in proxycheck.io:
+        if args.use_proxycheck:
+            if is_valid_public_ip(ip):
+                proxycheck_result = call_proxycheck_api(ip, args.proxycheck_api, args.csv_delimiter_output)
+                if proxycheck_result:
+                    line = line + args.csv_delimiter_output + proxycheck_result
+                else:
+                    line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(["", "", "", "", "", ""])
+            else:
+                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(["", "", "", "", "", ""])
+
         outfile.write(line + "\n")
 
     outfile.close()
@@ -300,6 +331,38 @@ def call_abuseipdb_api(ip, api_key, delimiter):
         return None
     except urllib.error.URLError as e:
         print(f"Error connecting to AbuseIPDB API: {e}", file=sys.stderr)
+        return None
+
+def call_proxycheck_api(ip, api_key, delimiter):
+    """Call proxycheck.io API for proxy/VPN detection."""
+    params = urllib.parse.urlencode({
+        "key": api_key,
+        "vpn": 1,
+        "asn": 1,
+        "risk": 1
+    })
+    url = f"https://proxycheck.io/v2/{ip}?{params}"
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            if data.get("status") != "ok":
+                print(f"proxycheck.io API error for {ip}: {data.get('message', 'Unknown error')}", file=sys.stderr)
+                return None
+            result = data.get(ip, {})
+            proxy = result.get("proxy", "")
+            proxy_type = result.get("type", "")
+            risk = str(result.get("risk", ""))
+            country = result.get("country", "")
+            asn = result.get("asn", "")
+            provider = result.get("provider", "")
+            return delimiter.join([str(proxy), proxy_type, risk, country, asn, provider])
+    except urllib.error.HTTPError as e:
+        print(f"proxycheck.io API error for {ip}: {e}", file=sys.stderr)
+        return None
+    except urllib.error.URLError as e:
+        print(f"Error connecting to proxycheck.io API: {e}", file=sys.stderr)
         return None
 
 DNSBL_SERVERS = [
