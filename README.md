@@ -70,6 +70,7 @@ You can also supply a CSV file with columns, then enrich-ip will add more column
 - [ipinfo.io](http://ipinfo.io): Get hostname for IP
 - [DNSDumpster](https://dnsdumpster.com): Get services that is running on IP, for example, Apache, Nginx, SSH etc.
 - [AbuseIPDB](https://www.abuseipdb.com): Get abuse score and report nbr of occurencies the IP have
+- [proxycheck.io](https://proxycheck.io): Detect if IP is a proxy/VPN with risk scoring
 - [KML Export](https://earth.google.com): Generate Google Earth compatible KML file with coordinates of all IPs in list
 
 ## Installation
@@ -136,6 +137,10 @@ python enrich-ip.py --input-file <file> [options]
 
 `--abuseipdb-api` - API key for AbuseIPDB (cached after first use)
 
+`--use-proxycheck` - Use proxycheck.io API for proxy/VPN detection
+
+`--proxycheck-api` - API key for proxycheck.io (cached after first use)
+
 `--generate-kml` - Generate KML file for Google Earth (requires `--use-ip-db`)
 
 
@@ -159,6 +164,12 @@ python enrich-ip.py --input-file ips.csv --use-ip-db --ip-db-key YOUR_KEY --use-
 python enrich-ip.py --input-file ips.txt --use-ip-db --generate-kml
 ```
 
+### Detect proxies and VPNs
+
+```bash
+python enrich-ip.py --input-file ips.txt --use-proxycheck --proxycheck-api YOUR_KEY
+```
+
 ### Process CSV with custom delimiter
 
 ```bash
@@ -176,6 +187,7 @@ API keys are cached in the home directory after first use:
 - `~/.enrichip-ip-db-key`
 - `~/.enrichip-dnsdumpster-key`
 - `~/.enrichip-abuseipdb-key`
+- `~/.enrichip-proxycheck-key`
 
 You only need to provide the API key once; subsequent runs will use the cached key.
 
