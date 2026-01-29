@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument( "--abuseipdb-api", type=str, help="API key for AbuseIPDB")
     parser.add_argument( "--use-proxycheck", action="store_true", default=False, help="Use proxycheck.io API for proxy/VPN detection")
     parser.add_argument( "--proxycheck-api", type=str, help="API key for proxycheck.io")
+    parser.add_argument( "--ascii-output", action="store_true", default=False, help="Output as ASCII table to stdout instead of CSV file")
     return parser.parse_args()
 
 def main():
@@ -109,19 +110,24 @@ def main():
 
     # Build output filename based on input file and create new output file
     input_filename = Path(args.input_file.name)
-    if input_filename.suffix.lower() == ".csv":
-        output_filename = input_filename.with_suffix(".out.csv")
-    else:
-        output_filename = input_filename.with_suffix(input_filename.suffix + ".out.csv")
+    outfile = None
+    output_filename = None
+    output_rows = []  # Used for ASCII output
 
-    try:
-        outfile = open(output_filename, "w")
-    except PermissionError:
-        print(f"Error: Permission denied to create output file: {output_filename}", file=sys.stderr)
-        sys.exit(1)
-    except OSError as e:
-        print(f"Error: Could not create output file: {output_filename} - {e}", file=sys.stderr)
-        sys.exit(1)
+    if not args.ascii_output:
+        if input_filename.suffix.lower() == ".csv":
+            output_filename = input_filename.with_suffix(".out.csv")
+        else:
+            output_filename = input_filename.with_suffix(input_filename.suffix + ".out.csv")
+
+        try:
+            outfile = open(output_filename, "w")
+        except PermissionError:
+            print(f"Error: Permission denied to create output file: {output_filename}", file=sys.stderr)
+            sys.exit(1)
+        except OSError as e:
+            print(f"Error: Could not create output file: {output_filename} - {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Build header for output csv file
     csv_output_header = csv_input_header.replace(args.csv_delimiter, args.csv_delimiter_output).strip()
@@ -159,9 +165,12 @@ def main():
         csv_output_header = (csv_output_header + args.csv_delimiter_output +
                              args.csv_delimiter_output.join(proxycheck_headers))
 
-    # Write header to output file
+    # Write header to output file or store for ASCII output
     if csv_output_header:
-        outfile.write(csv_output_header + "\n")
+        if args.ascii_output:
+            output_rows.append(csv_output_header.split(args.csv_delimiter_output))
+        else:
+            outfile.write(csv_output_header + "\n")
 
     # Parse input file, line by line
     total_lines = len(input_file_lines)
@@ -265,10 +274,16 @@ def main():
             else:
                 line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(["", "", "", "", "", ""])
 
-        outfile.write(line + "\n")
+        if args.ascii_output:
+            output_rows.append(line.split(args.csv_delimiter_output))
+        else:
+            outfile.write(line + "\n")
 
-    outfile.close()
-    print(f"Output written to: {output_filename}")
+    if args.ascii_output:
+        print_ascii_table(output_rows)
+    else:
+        outfile.close()
+        print(f"Output written to: {output_filename}")
 
     # Generate KML file for Google Earth
     if args.generate_kml and location_list:
@@ -338,10 +353,12 @@ def call_proxycheck_api(ip, api_key, delimiter):
     params = urllib.parse.urlencode({
         "key": api_key,
         "vpn": 1,
-        "asn": 1,
+        "asn": 0,
+        "port": 1,
         "risk": 1
     })
     url = f"https://proxycheck.io/v2/{ip}?{params}"
+    print(url)
     req = urllib.request.Request(url)
     req.add_header("Accept", "application/json")
     try:
@@ -351,6 +368,7 @@ def call_proxycheck_api(ip, api_key, delimiter):
                 print(f"proxycheck.io API error for {ip}: {data.get('message', 'Unknown error')}", file=sys.stderr)
                 return None
             result = data.get(ip, {})
+            print(data)
             proxy = result.get("proxy", "")
             proxy_type = result.get("type", "")
             risk = str(result.get("risk", ""))
@@ -490,6 +508,33 @@ def is_private_ip(ip_string):
         return ip.is_private
     except ValueError:
         return False
+
+def print_ascii_table(rows):
+    """Print rows as an ASCII table."""
+    if not rows:
+        return
+
+    # Calculate column widths
+    num_cols = max(len(row) for row in rows)
+    col_widths = [0] * num_cols
+    for row in rows:
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(str(cell)))
+
+    # Build separator line
+    separator = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
+
+    # Print table
+    for row_idx, row in enumerate(rows):
+        # Pad row if necessary
+        padded_row = list(row) + [""] * (num_cols - len(row))
+        line = "|" + "|".join(f" {str(cell).ljust(col_widths[i])} " for i, cell in enumerate(padded_row)) + "|"
+        if row_idx == 0:
+            print(separator)
+        print(line)
+        if row_idx == 0:
+            print(separator)
+    print(separator)
 
 
 if __name__ == "__main__":
