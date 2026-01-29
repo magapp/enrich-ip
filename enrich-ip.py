@@ -161,7 +161,7 @@ def main():
 
     # If using proxycheck.io, add headers:
     if args.use_proxycheck:
-        proxycheck_headers = ["Proxy", "Proxy-Type", "Proxy-Risk", "Proxy-Country", "Proxy-ASN", "Proxy-Provider"]
+        proxycheck_headers = ["Proxy", "Proxy-Type", "Risk", "Country", "City", "Organisation", "Operator", "Traceable", "Attack-History"]
         csv_output_header = (csv_output_header + args.csv_delimiter_output +
                              args.csv_delimiter_output.join(proxycheck_headers))
 
@@ -270,9 +270,9 @@ def main():
                 if proxycheck_result:
                     line = line + args.csv_delimiter_output + proxycheck_result
                 else:
-                    line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(["", "", "", "", "", ""])
+                    line = line + args.csv_delimiter_output + args.csv_delimiter_output.join([""] * 9)
             else:
-                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(["", "", "", "", "", ""])
+                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join([""] * 9)
 
         if args.ascii_output:
             output_rows.append(line.split(args.csv_delimiter_output))
@@ -353,9 +353,9 @@ def call_proxycheck_api(ip, api_key, delimiter):
     params = urllib.parse.urlencode({
         "key": api_key,
         "vpn": 1,
-        "asn": 0,
+        "asn": 1,
         "port": 1,
-        "risk": 1
+        "risk": 2
     })
     url = f"https://proxycheck.io/v2/{ip}?{params}"
     print(url)
@@ -373,9 +373,26 @@ def call_proxycheck_api(ip, api_key, delimiter):
             proxy_type = result.get("type", "")
             risk = str(result.get("risk", ""))
             country = result.get("country", "")
-            asn = result.get("asn", "")
-            provider = result.get("provider", "")
-            return delimiter.join([str(proxy), proxy_type, risk, country, asn, provider])
+            city = result.get("city", "")
+            organisation = result.get("organisation", "")
+            # Operator is a nested dict with VPN provider details
+            operator_data = result.get("operator", {})
+            if isinstance(operator_data, dict):
+                operator_name = operator_data.get("name", "")
+                policies = operator_data.get("policies", {})
+                traceable = policies.get("traceable_ownership", "")
+            else:
+                operator_name = ""
+                traceable = ""
+            # Attack history is a dict with attack types and counts
+            attack_history = result.get("attack history", {})
+            if isinstance(attack_history, dict):
+                # Format as "type:count, type:count" excluding Total
+                attacks = [f"{k}:{v}" for k, v in attack_history.items() if k != "Total"]
+                attack_history_str = ", ".join(attacks)
+            else:
+                attack_history_str = str(attack_history) if attack_history else ""
+            return delimiter.join([str(proxy), proxy_type, risk, country, city, organisation, operator_name, traceable, attack_history_str])
     except urllib.error.HTTPError as e:
         print(f"proxycheck.io API error for {ip}: {e}", file=sys.stderr)
         return None

@@ -70,7 +70,7 @@ You can also supply a CSV file with columns, then enrich-ip will add more column
 - [ipinfo.io](http://ipinfo.io): Get hostname for IP
 - [DNSDumpster](https://dnsdumpster.com): Get services that is running on IP, for example, Apache, Nginx, SSH etc.
 - [AbuseIPDB](https://www.abuseipdb.com): Get abuse score and report nbr of occurencies the IP have
-- [proxycheck.io](https://proxycheck.io): Detect if IP is a proxy/VPN with risk scoring
+- [proxycheck.io](https://proxycheck.io): Detect if IP is a proxy/VPN with risk scoring, VPN provider identification (e.g., NordVPN, Mullvad), and attack history
 - [KML Export](https://earth.google.com): Generate Google Earth compatible KML file with coordinates of all IPs in list
 
 ## Installation
@@ -143,6 +143,8 @@ python enrich-ip.py --input-file <file> [options]
 
 `--generate-kml` - Generate KML file for Google Earth (requires `--use-ip-db`)
 
+`--ascii-output` - Output as ASCII table to stdout instead of CSV file
+
 
 ## Examples
 
@@ -170,6 +172,12 @@ python enrich-ip.py --input-file ips.txt --use-ip-db --generate-kml
 python enrich-ip.py --input-file ips.txt --use-proxycheck --proxycheck-api YOUR_KEY
 ```
 
+### Output as ASCII table
+
+```bash
+python enrich-ip.py --input-file ips.txt --use-proxycheck --ascii-output
+```
+
 ### Process CSV with custom delimiter
 
 ```bash
@@ -178,7 +186,7 @@ python enrich-ip.py --input-file data.csv --csv-delimiter "," --csv-delimiter-ou
 
 ## Output
 
-The tool creates an output file with the same name as the input file but with `.out.csv` extension. If `--generate-kml` is used, a `.kml` file is also created.
+The tool creates an output file with the same name as the input file but with `.out.csv` extension. If `--generate-kml` is used, a `.kml` file is also created. Use `--ascii-output` to display results as a formatted ASCII table in the terminal instead of writing to a file.
 
 ## API Key Caching
 
