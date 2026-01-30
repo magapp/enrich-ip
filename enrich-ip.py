@@ -237,18 +237,21 @@ def main():
                 line = line + args.csv_delimiter_output + args.csv_delimiter_output.join([""])
 
         # Enrich output with info from DNSDumpster (requires a hostname from ip-info):
-        if args.use_dnsdumpster and valid_hostname:
-            dnsdumpster_result = call_dnsdumpster_api(valid_hostname, args.dnsdumpster_api)
-            if dnsdumpster_result:
-                banners = set()
-                for a in dnsdumpster_result.get('a', []):
-                    for ips in a.get('ips', []):
-                        for key, val in ips.get('banners', {}).items():
-                            if key == 'ip':
-                                continue
-                            banners.add(key)
+        if args.use_dnsdumpster:
+            if valid_hostname:
+                dnsdumpster_result = call_dnsdumpster_api(valid_hostname, args.dnsdumpster_api)
+                if dnsdumpster_result:
+                    banners = set()
+                    for a in dnsdumpster_result.get('a', []):
+                        for ips in a.get('ips', []):
+                            for key, val in ips.get('banners', {}).items():
+                                if key == 'ip':
+                                    continue
+                                banners.add(key)
 
-                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(list(banners))
+                    line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(list(banners))
+                else:
+                    line = line + args.csv_delimiter_output + args.csv_delimiter_output.join([""])
             else:
                 line = line + args.csv_delimiter_output + args.csv_delimiter_output.join([""])
 
