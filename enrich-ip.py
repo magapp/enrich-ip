@@ -358,7 +358,6 @@ def call_proxycheck_api(ip, api_key, delimiter):
         "risk": 2
     })
     url = f"https://proxycheck.io/v2/{ip}?{params}"
-    print(url)
     req = urllib.request.Request(url)
     req.add_header("Accept", "application/json")
     try:
@@ -368,7 +367,6 @@ def call_proxycheck_api(ip, api_key, delimiter):
                 print(f"proxycheck.io API error for {ip}: {data.get('message', 'Unknown error')}", file=sys.stderr)
                 return None
             result = data.get(ip, {})
-            print(data)
             proxy = result.get("proxy", "")
             proxy_type = result.get("type", "")
             risk = str(result.get("risk", ""))
