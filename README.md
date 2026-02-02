@@ -11,6 +11,8 @@ IP-DB is a database that is downloaded locally so with this one you can probe as
 
 Also note that some of the services requires an API-key.
 
+Enrich-ip is module based, so each service is defined as a "provider" in the the code. You can add your own providers easy by adding a new module.
+
 For example, you have a text file with IP-adresses, like this:
 
 ```
@@ -198,6 +200,136 @@ API keys are cached in the home directory after first use:
 - `~/.enrichip-proxycheck-key`
 
 You only need to provide the API key once; subsequent runs will use the cached key.
+
+## Creating New Provider Modules
+
+The tool uses a modular provider architecture. Each enrichment source is implemented as a separate provider module in the `providers/` directory.
+
+### Provider Architecture
+
+```
+providers/
+├── __init__.py       # Provider registry
+├── base.py           # BaseProvider abstract class
+├── ipdb.py           # IP-DB provider
+├── dnsbl.py          # DNSBL provider
+├── ipinfo.py         # ipinfo.io provider
+├── dnsdumpster.py    # DNSDumpster provider
+├── abuseipdb.py      # AbuseIPDB provider
+└── proxycheck.py     # proxycheck.io provider
+```
+
+### Creating a New Provider
+
+1. Create a new file in `providers/` (e.g., `providers/myprovider.py`)
+
+2. Implement the provider class:
+
+```python
+from providers.base import BaseProvider
+from utils import is_valid_public_ip
+
+class MyProvider(BaseProvider):
+    """Provider for MyService."""
+
+    name = "myprovider"                         # Used in --use-myprovider flag
+    requires_api_key = True                     # Set to False if no API key needed
+    key_cache_file = ".enrichip-myprovider-key" # Cache file in home directory
+    headers = ["Column1", "Column2"]            # CSV column headers
+    dependencies = []                           # Other providers this depends on
+
+    @classmethod
+    def add_arguments(cls, parser):
+        """Add command line arguments."""
+        parser.add_argument(
+            "--use-myprovider",
+            action="store_true",
+            default=False,
+            help="Use MyService for enrichment"
+        )
+        # Add API key argument if required
+        parser.add_argument(
+            "--myprovider-api",
+            type=str,
+            help="API key for MyService"
+        )
+
+    def initialize(self, args):
+        """Initialize the provider."""
+        if not args.use_myprovider:
+            return True
+
+        self.enabled = True
+
+        # If API key is required, load it
+        if self.requires_api_key:
+            return self._load_api_key(args, 'myprovider_api', 'MyService')
+        return True
+
+    def enrich(self, ip, context):
+        """Enrich IP with data from MyService.
+
+        Args:
+            ip: The IP address to enrich
+            context: Dict for passing data between providers
+
+        Returns:
+            List of values matching self.headers, or None on error
+        """
+        if not is_valid_public_ip(ip):
+            return [""] * len(self.headers)
+
+        # Call your API here
+        # ...
+
+        # Return values matching headers order
+        return ["value1", "value2"]
+```
+
+3. Register the provider in `providers/__init__.py`:
+
+```python
+from providers.myprovider import MyProvider
+
+ALL_PROVIDERS = [
+    # ... existing providers ...
+    MyProvider,  # Add your provider here
+]
+```
+
+### Provider Interface
+
+| Method | Purpose |
+|--------|---------|
+| `add_arguments(parser)` | Add CLI arguments (--use-X, --X-api) |
+| `initialize(args)` | Validate args, load API key, return True/False |
+| `get_headers()` | Return list of CSV column headers |
+| `enrich(ip, context)` | Enrich IP, return list of values or None |
+
+### Context Dictionary
+
+Providers can share data via the `context` dict passed to `enrich()`:
+
+```python
+# In ipinfo provider - store hostname
+context['hostname'] = hostname
+
+# In dnsdumpster provider - use hostname
+hostname = context.get('hostname')
+```
+
+### Provider Dependencies
+
+If your provider depends on another provider running first:
+
+1. Add to `dependencies` list: `dependencies = ["ipinfo"]`
+2. Check in `initialize()`:
+   ```python
+   if not args.use_ipinfo:
+       print("Error: --use-myprovider requires --use-ipinfo", file=sys.stderr)
+       sys.exit(1)
+   ```
+3. Ensure provider order in `ALL_PROVIDERS` list (dependencies must come first)
 
 ## License
 
