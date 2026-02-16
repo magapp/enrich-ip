@@ -63,10 +63,12 @@ class IPDBProvider(BaseProvider):
         key_path = self._get_key_path()
 
         if args.ip_db_key:
+            if key_path.is_dir():
+                key_path.rmdir()
             key_path.write_text(args.ip_db_key)
             print("Storing IP-DB key to cache...")
             api_key = args.ip_db_key
-        elif key_path.exists():
+        elif key_path.is_file():
             api_key = key_path.read_text().strip()
             print("Retreiving IP-DB key from cache...")
         else:
@@ -75,15 +77,30 @@ class IPDBProvider(BaseProvider):
 
         print("IP-DB database not found, downloading from db-ip.com...")
         info_url = f"https://db-ip.com/account/{api_key}/db/ip-to-location-isp/"
-        print(info_url)
+        headers = {"User-Agent": "enrich-ip/1.0"}
         try:
-            with urllib.request.urlopen(info_url) as response:
+            req = urllib.request.Request(info_url, headers=headers)
+            with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode())
             download_url = data["mmdb"]["url"]
-            print(download_url)
             print("Downloading IP database...")
-            with urllib.request.urlopen(download_url) as response:
-                compressed_data = response.read()
+            dl_req = urllib.request.Request(download_url, headers=headers)
+            with urllib.request.urlopen(dl_req) as response:
+                total_size = int(response.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunks = []
+                while True:
+                    chunk = response.read(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    downloaded += len(chunk)
+                    if self.progress_callback and total_size:
+                        self.progress_callback("download", {
+                            "downloaded": downloaded,
+                            "total": total_size,
+                        })
+                compressed_data = b"".join(chunks)
             decompressed_data = gzip.decompress(compressed_data)
             self.IP_DB_FILE.write_bytes(decompressed_data)
             print(f"IP database saved to {self.IP_DB_FILE}")

@@ -16,6 +16,7 @@ class BaseProvider(ABC):
     def __init__(self):
         self.api_key = None
         self.enabled = False
+        self.progress_callback = None
 
     @classmethod
     def add_arguments(cls, parser):
@@ -69,10 +70,12 @@ class BaseProvider(ABC):
         if key_from_args:
             self.api_key = key_from_args
             if key_path:
+                if key_path.is_dir():
+                    key_path.rmdir()
                 key_path.write_text(key_from_args)
                 print(f"Storing {provider_display_name} key to cache...")
             return True
-        elif key_path and key_path.exists():
+        elif key_path and key_path.is_file():
             self.api_key = key_path.read_text().strip()
             print(f"Retrieving {provider_display_name} key from cache...")
             return True

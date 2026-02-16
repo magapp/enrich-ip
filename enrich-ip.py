@@ -116,7 +116,10 @@ def main():
         ip = None
 
         if is_csv:
-            ip = line.strip().split(args.csv_delimiter)[args.csv_ip_field]
+            try:
+                ip = line.strip().split(args.csv_delimiter)[args.csv_ip_field]
+            except:
+                ip = ""
         else:
             ip = line.strip()
 

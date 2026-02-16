@@ -1,6 +1,6 @@
 # enrich-ip
 
-A command-line tool to enrich IP addresses with additional information from various sources.
+A tool to enrich IP addresses with additional information from various sources. Available as both a command-line tool and a web application.
 
 If you have a list of IP-adresses in a text file or CSV-file, you can run enrich-ip. With help from the sources listed below,
 a new CSV-file will be generated with additional columns containting more information about the addresses.
@@ -89,8 +89,11 @@ source env/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run
+# Run CLI
 python enrich-ip.py --help
+
+# Run web app
+python app.py
 ```
 
 ### Using Docker
@@ -99,13 +102,36 @@ python enrich-ip.py --help
 # Build image
 docker compose build
 
-# Run with arguments
+# Run the web app (available at http://localhost:5000)
+docker compose up web
+
+# Run CLI with arguments
 docker compose run enrich-ip --input-file /data/input.csv --use-dnsbl
 ```
 
 Place input files in the `data/` directory and reference them as `/data/filename.csv`.
 
-## Usage
+## Web Application
+
+The web interface provides the same enrichment capabilities through a browser.
+
+```bash
+python app.py
+```
+
+Then open http://localhost:5000. With Docker: `docker compose up web` and open http://localhost:5000.
+
+The web form lets you:
+- Upload a `.txt` or `.csv` file (up to 16 MB)
+- Configure CSV input/output delimiters and IP column index
+- Select which providers to use and enter API keys
+- Watch real-time progress as IPs are processed (progress bar with per-IP status)
+- View enrichment results in an interactive table directly in the browser
+- Download the enriched CSV file
+
+API keys entered through the web form are cached the same way as the CLI (`~/.enrichip-*-key` files), so you only need to provide them once. The web form shows an "API key cached" indicator next to providers where a key is already saved.
+
+## CLI Usage
 
 ```bash
 python enrich-ip.py --input-file <file> [options]
@@ -201,6 +227,13 @@ API keys are cached in the home directory after first use:
 
 You only need to provide the API key once; subsequent runs will use the cached key.
 
+## Running Tests
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
+
 ## Creating New Provider Modules
 
 The tool uses a modular provider architecture. Each enrichment source is implemented as a separate provider module in the `providers/` directory.
@@ -208,15 +241,20 @@ The tool uses a modular provider architecture. Each enrichment source is impleme
 ### Provider Architecture
 
 ```
+enrich-ip.py              # CLI entry point
+app.py                    # Flask web application
+templates/index.html      # Web form template
 providers/
-├── __init__.py       # Provider registry
-├── base.py           # BaseProvider abstract class
-├── ipdb.py           # IP-DB provider
-├── dnsbl.py          # DNSBL provider
-├── ipinfo.py         # ipinfo.io provider
-├── dnsdumpster.py    # DNSDumpster provider
-├── abuseipdb.py      # AbuseIPDB provider
-└── proxycheck.py     # proxycheck.io provider
+├── __init__.py           # Provider registry
+├── base.py               # BaseProvider abstract class
+├── ipdb.py               # IP-DB provider
+├── dnsbl.py              # DNSBL provider
+├── ipinfo.py             # ipinfo.io provider
+├── dnsdumpster.py        # DNSDumpster provider
+├── abuseipdb.py          # AbuseIPDB provider
+└── proxycheck.py         # proxycheck.io provider
+tests/
+└── test_app.py           # Tests
 ```
 
 ### Creating a New Provider
