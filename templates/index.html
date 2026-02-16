@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>enrich-ip</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 2rem; }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 8px; padding: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        h1 { margin-bottom: 1.5rem; }
+        .section { margin-bottom: 1.5rem; }
+        .section h2 { font-size: 1.1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #eee; padding-bottom: 0.25rem; }
+        label { display: block; margin-bottom: 0.3rem; }
+        input[type="file"], input[type="text"] { width: 100%; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 0.5rem; }
+        input[type="text"] { max-width: 300px; }
+        .provider { padding: 0.5rem 0; }
+        .provider-header { display: flex; align-items: center; gap: 0.5rem; }
+        .provider-header input[type="checkbox"] { width: auto; }
+        .api-key-field { margin-left: 1.5rem; margin-top: 0.3rem; display: none; }
+        .api-key-field.visible { display: block; }
+        .note { font-size: 0.85rem; color: #666; margin-left: 1.5rem; }
+        .cached { font-size: 0.85rem; color: #080; margin-left: 1.5rem; margin-top: 0.3rem; }
+        .error-msg { background: #fee; color: #c00; border: 1px solid #fcc; border-radius: 4px; padding: 0.75rem; margin-bottom: 1rem; }
+        .download { background: #efe; border: 1px solid #cec; border-radius: 4px; padding: 0.75rem; margin-top: 0.75rem; }
+        .download a { color: #060; font-weight: bold; text-decoration: none; border: 1px solid #090; padding: 0.3rem 0.8rem; border-radius: 4px; }
+        .download a:hover { background: #cec; }
+        button[type="submit"] { background: #2563eb; color: #fff; border: none; padding: 0.6rem 1.5rem; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+        button[type="submit"]:hover { background: #1d4ed8; }
+        button[type="submit"]:disabled { background: #93b4f5; cursor: not-allowed; }
+        .results { margin-bottom: 1.5rem; }
+        .results h2 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .table-wrap { overflow-x: auto; }
+        .results table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
+        .results th, .results td { border: 1px solid #ddd; padding: 0.35rem 0.6rem; text-align: left; white-space: nowrap; }
+        .results th { background: #f0f0f0; position: sticky; top: 0; }
+        .results tr:nth-child(even) { background: #fafafa; }
+        .inline-fields { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .inline-fields > div { flex: 1; min-width: 120px; }
+        .progress-section { margin-bottom: 1.5rem; }
+        .progress-status { margin-bottom: 0.4rem; font-size: 0.9rem; color: #555; }
+        .progress-bar { height: 1.2rem; background: #eee; border-radius: 6px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #2563eb; border-radius: 6px; transition: width 0.2s; width: 0%; }
+        .progress-fill.indeterminate {
+            width: 25%;
+            animation: slide 1.5s ease-in-out infinite;
+        }
+        @keyframes slide {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>enrich-ip</h1>
+
+    <div id="error-area"></div>
+    <div id="progress-section" class="progress-section" style="display:none;">
+        <div id="progress-status" class="progress-status">Initializing...</div>
+        <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill indeterminate"></div>
+        </div>
+    </div>
+    <div id="results-section" class="results" style="display:none;"></div>
+
+    <form id="enrich-form" method="post" action="{{ url_for('enrich') }}" enctype="multipart/form-data">
+        <div class="section">
+            <h2>Input File</h2>
+            <label for="input_file">Upload .txt or .csv file</label>
+            <input type="file" name="input_file" id="input_file" accept=".txt,.csv" required>
+        </div>
+
+        <div class="section">
+            <h2>CSV Settings</h2>
+            <div class="inline-fields">
+                <div>
+                    <label for="csv_delimiter">Input delimiter</label>
+                    <input type="text" name="csv_delimiter" id="csv_delimiter" value=";" maxlength="5">
+                </div>
+                <div>
+                    <label for="csv_delimiter_output">Output delimiter</label>
+                    <input type="text" name="csv_delimiter_output" id="csv_delimiter_output" value=";" maxlength="5">
+                </div>
+                <div>
+                    <label for="csv_ip_field">IP column index</label>
+                    <input type="text" name="csv_ip_field" id="csv_ip_field" placeholder="0">
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Providers</h2>
+
+            <div class="provider">
+                <div class="provider-header">
+                    <input type="checkbox" name="use_ip_db" id="use_ip_db" {% if "ip-db" not in cached_keys %}onchange="toggleKey('ip_db')"{% endif %}>
+                    <label for="use_ip_db"><strong>IP-DB</strong> &mdash; Geolocation (country, city, ASN, ISP)</label>
+                </div>
+                {% if "ip-db" in cached_keys %}
+                <div class="cached">API key cached</div>
+                {% else %}
+                <div class="api-key-field" id="key_ip_db">
+                    <input type="text" name="ip_db_key" placeholder="IP-DB API key">
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="provider">
+                <div class="provider-header">
+                    <input type="checkbox" name="use_dnsbl" id="use_dnsbl">
+                    <label for="use_dnsbl"><strong>DNSBL</strong> &mdash; Blacklist count (no API key needed)</label>
+                </div>
+            </div>
+
+            <div class="provider">
+                <div class="provider-header">
+                    <input type="checkbox" name="use_ipinfo" id="use_ipinfo">
+                    <label for="use_ipinfo"><strong>IPInfo</strong> &mdash; Hostname lookup (no API key needed)</label>
+                </div>
+            </div>
+
+            <div class="provider">
+                <div class="provider-header">
+                    <input type="checkbox" name="use_dnsdumpster" id="use_dnsdumpster" onchange="{% if 'dnsdumpster' not in cached_keys %}toggleKey('dnsdumpster'); {% endif %}enforceDnsDeps()">
+                    <label for="use_dnsdumpster"><strong>DNSDumpster</strong> &mdash; Banner discovery</label>
+                </div>
+                <div class="note">Requires IPInfo to be enabled</div>
+                {% if "dnsdumpster" in cached_keys %}
+                <div class="cached">API key cached</div>
+                {% else %}
+                <div class="api-key-field" id="key_dnsdumpster">
+                    <input type="text" name="dnsdumpster_api" placeholder="DNSDumpster API key">
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="provider">
+                <div class="provider-header">
+                    <input type="checkbox" name="use_abuseipdb" id="use_abuseipdb" {% if "abuseipdb" not in cached_keys %}onchange="toggleKey('abuseipdb')"{% endif %}>
+                    <label for="use_abuseipdb"><strong>AbuseIPDB</strong> &mdash; Abuse score and reports</label>
+                </div>
+                {% if "abuseipdb" in cached_keys %}
+                <div class="cached">API key cached</div>
+                {% else %}
+                <div class="api-key-field" id="key_abuseipdb">
+                    <input type="text" name="abuseipdb_api" placeholder="AbuseIPDB API key">
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="provider">
+                <div class="provider-header">
+                    <input type="checkbox" name="use_proxycheck" id="use_proxycheck" {% if "proxycheck" not in cached_keys %}onchange="toggleKey('proxycheck')"{% endif %}>
+                    <label for="use_proxycheck"><strong>proxycheck.io</strong> &mdash; Proxy/VPN detection</label>
+                </div>
+                {% if "proxycheck" in cached_keys %}
+                <div class="cached">API key cached</div>
+                {% else %}
+                <div class="api-key-field" id="key_proxycheck">
+                    <input type="text" name="proxycheck_api" placeholder="proxycheck.io API key">
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <button type="submit" id="submit-btn">Enrich IPs</button>
+    </form>
+</div>
+
+<script>
+function toggleKey(provider) {
+    var cb = document.getElementById('use_' + provider);
+    var field = document.getElementById('key_' + provider);
+    if (field) {
+        field.classList.toggle('visible', cb.checked);
+    }
+}
+
+function enforceDnsDeps() {
+    var dns = document.getElementById('use_dnsdumpster');
+    if (dns.checked) {
+        document.getElementById('use_ipinfo').checked = true;
+    }
+}
+
+var progressSection = document.getElementById('progress-section');
+var progressStatus = document.getElementById('progress-status');
+var progressFill = document.getElementById('progress-fill');
+var resultsSection = document.getElementById('results-section');
+var errorArea = document.getElementById('error-area');
+var submitBtn = document.getElementById('submit-btn');
+
+function showError(msg) {
+    errorArea.innerHTML = '<div class="error-msg">' + escapeHtml(msg) + '</div>';
+}
+
+function escapeHtml(str) {
+    var d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function setIndeterminate() {
+    progressFill.className = 'progress-fill indeterminate';
+    progressFill.style.width = '';
+}
+
+function setProgress(pct) {
+    progressFill.className = 'progress-fill';
+    progressFill.style.width = Math.min(100, Math.round(pct)) + '%';
+}
+
+function handleEvent(ev) {
+    switch (ev.event) {
+        case 'status':
+            progressStatus.textContent = ev.message;
+            setIndeterminate();
+            break;
+        case 'download':
+            var dlPct = ev.total > 0 ? (ev.downloaded / ev.total * 100) : 0;
+            progressStatus.textContent = 'Downloading IP-DB database... ' + Math.round(dlPct) + '%';
+            setProgress(dlPct);
+            break;
+        case 'progress':
+            progressStatus.textContent = 'Processing IP ' + ev.current + ' of ' + ev.total + '...';
+            setProgress(ev.current / ev.total * 100);
+            break;
+        case 'done':
+            progressSection.style.display = 'none';
+            showResults(ev);
+            break;
+        case 'error':
+            progressSection.style.display = 'none';
+            showError(ev.message);
+            break;
+    }
+}
+
+function showResults(ev) {
+    var html = '<h2>Results</h2><div class="table-wrap"><table><thead><tr>';
+    for (var i = 0; i < ev.headers.length; i++) {
+        html += '<th>' + escapeHtml(ev.headers[i]) + '</th>';
+    }
+    html += '</tr></thead><tbody>';
+    for (var r = 0; r < ev.rows.length; r++) {
+        html += '<tr>';
+        for (var c = 0; c < ev.rows[r].length; c++) {
+            html += '<td>' + escapeHtml(ev.rows[r][c]) + '</td>';
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    html += '<div class="download"><a href="/download/' + encodeURIComponent(ev.filename) + '">Download CSV</a></div>';
+    resultsSection.innerHTML = html;
+    resultsSection.style.display = 'block';
+}
+
+document.getElementById('enrich-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    errorArea.innerHTML = '';
+    resultsSection.style.display = 'none';
+    resultsSection.innerHTML = '';
+    progressSection.style.display = 'block';
+    progressStatus.textContent = 'Uploading file...';
+    setIndeterminate();
+    submitBtn.disabled = true;
+
+    try {
+        var response = await fetch(this.action, {
+            method: 'POST',
+            body: new FormData(this)
+        });
+
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        while (true) {
+            var result = await reader.read();
+            if (result.done) break;
+            buffer += decoder.decode(result.value, {stream: true});
+            var lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (var i = 0; i < lines.length; i++) {
+                if (lines[i].trim()) {
+                    handleEvent(JSON.parse(lines[i]));
+                }
+            }
+        }
+        if (buffer.trim()) {
+            handleEvent(JSON.parse(buffer));
+        }
+    } catch (err) {
+        progressSection.style.display = 'none';
+        showError('Connection error: ' + err.message);
+    }
+
+    submitBtn.disabled = false;
+});
+</script>
+</body>
+</html>
