@@ -9,13 +9,15 @@ import types
 import uuid
 from pathlib import Path
 
-from flask import Flask, Response, render_template, request, send_from_directory, stream_with_context
+from flask import Flask, Blueprint, Response, redirect, render_template, request, send_from_directory, stream_with_context, url_for
 
 from providers import create_providers, get_provider_classes
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
+
+bp = Blueprint("enrich_ip", __name__, url_prefix="/enrich-ip")
 
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "enrich-ip")
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -163,11 +165,16 @@ def _ndjson_line(obj):
 
 
 @app.route("/")
+def root():
+    return redirect(url_for("enrich_ip.index"))
+
+
+@bp.route("/")
 def index():
     return render_template("index.html", cached_keys=get_cached_keys())
 
 
-@app.route("/enrich", methods=["POST"])
+@bp.route("/enrich", methods=["POST"])
 def enrich():
     uploaded = request.files.get("input_file")
     if not uploaded or uploaded.filename == "":
@@ -248,10 +255,12 @@ def enrich():
     )
 
 
-@app.route("/download/<filename>")
+@bp.route("/download/<filename>")
 def download(filename):
     return send_from_directory(TEMP_DIR, filename, as_attachment=True, download_name="enriched.csv")
 
 
+app.register_blueprint(bp)
+
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5001)

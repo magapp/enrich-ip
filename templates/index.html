@@ -8,7 +8,8 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 2rem; }
         .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 8px; padding: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        h1 { margin-bottom: 1.5rem; }
+        h1 { margin-bottom: 0.75rem; }
+        .help-text { font-size: 0.9rem; color: #555; margin-bottom: 1.5rem; line-height: 1.5; }
         .section { margin-bottom: 1.5rem; }
         .section h2 { font-size: 1.1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #eee; padding-bottom: 0.25rem; }
         label { display: block; margin-bottom: 0.3rem; }
@@ -21,6 +22,9 @@
         .api-key-field.visible { display: block; }
         .note { font-size: 0.85rem; color: #666; margin-left: 1.5rem; }
         .cached { font-size: 0.85rem; color: #080; margin-left: 1.5rem; margin-top: 0.3rem; }
+        .speed-badge { font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 3px; }
+        .speed-fast { background: #d1fae5; color: #065f46; }
+        .speed-slow { background: #fee2e2; color: #991b1b; }
         .error-msg { background: #fee; color: #c00; border: 1px solid #fcc; border-radius: 4px; padding: 0.75rem; margin-bottom: 1rem; }
         .download { background: #efe; border: 1px solid #cec; border-radius: 4px; padding: 0.75rem; margin-top: 0.75rem; }
         .download a { color: #060; font-weight: bold; text-decoration: none; border: 1px solid #090; padding: 0.3rem 0.8rem; border-radius: 4px; }
@@ -54,6 +58,7 @@
 <body>
 <div class="container">
     <h1>enrich-ip</h1>
+    <p class="help-text">Upload a <strong>.txt</strong> file with one IP address per row, or a <strong>.csv</strong> file where one column contains IP addresses and additional columns will be appended. CSV files must have a header row.</p>
 
     <div id="error-area"></div>
     <div id="progress-section" class="progress-section" style="display:none;">
@@ -64,7 +69,7 @@
     </div>
     <div id="results-section" class="results" style="display:none;"></div>
 
-    <form id="enrich-form" method="post" action="{{ url_for('enrich') }}" enctype="multipart/form-data">
+    <form id="enrich-form" method="post" action="{{ url_for('enrich_ip.enrich') }}" enctype="multipart/form-data">
         <div class="section">
             <h2>Input File</h2>
             <label for="input_file">Upload .txt or .csv file</label>
@@ -94,8 +99,8 @@
 
             <div class="provider">
                 <div class="provider-header">
-                    <input type="checkbox" name="use_ip_db" id="use_ip_db" {% if "ip-db" not in cached_keys %}onchange="toggleKey('ip_db')"{% endif %}>
-                    <label for="use_ip_db"><strong>IP-DB</strong> &mdash; Geolocation (country, city, ASN, ISP)</label>
+                    <input type="checkbox" name="use_ip_db" id="use_ip_db" checked {% if "ip-db" not in cached_keys %}onchange="toggleKey('ip_db')"{% endif %}>
+                    <label for="use_ip_db"><strong>IP-DB</strong> &mdash; Geolocation (country, city, ASN, ISP) <span class="speed-badge speed-fast">fast</span></label>
                 </div>
                 {% if "ip-db" in cached_keys %}
                 <div class="cached">API key cached</div>
@@ -109,21 +114,21 @@
             <div class="provider">
                 <div class="provider-header">
                     <input type="checkbox" name="use_dnsbl" id="use_dnsbl">
-                    <label for="use_dnsbl"><strong>DNSBL</strong> &mdash; Blacklist count (no API key needed)</label>
+                    <label for="use_dnsbl"><strong>DNSBL</strong> &mdash; Blacklist count (no API key needed) <span class="speed-badge speed-slow">slow</span></label>
                 </div>
             </div>
 
             <div class="provider">
                 <div class="provider-header">
                     <input type="checkbox" name="use_ipinfo" id="use_ipinfo">
-                    <label for="use_ipinfo"><strong>IPInfo</strong> &mdash; Hostname lookup (no API key needed)</label>
+                    <label for="use_ipinfo"><strong>IPInfo</strong> &mdash; Hostname lookup (no API key needed) <span class="speed-badge speed-slow">slow</span></label>
                 </div>
             </div>
 
             <div class="provider">
                 <div class="provider-header">
                     <input type="checkbox" name="use_dnsdumpster" id="use_dnsdumpster" onchange="{% if 'dnsdumpster' not in cached_keys %}toggleKey('dnsdumpster'); {% endif %}enforceDnsDeps()">
-                    <label for="use_dnsdumpster"><strong>DNSDumpster</strong> &mdash; Banner discovery</label>
+                    <label for="use_dnsdumpster"><strong>DNSDumpster</strong> &mdash; Banner discovery <span class="speed-badge speed-slow">slow</span></label>
                 </div>
                 <div class="note">Requires IPInfo to be enabled</div>
                 {% if "dnsdumpster" in cached_keys %}
@@ -138,7 +143,7 @@
             <div class="provider">
                 <div class="provider-header">
                     <input type="checkbox" name="use_abuseipdb" id="use_abuseipdb" {% if "abuseipdb" not in cached_keys %}onchange="toggleKey('abuseipdb')"{% endif %}>
-                    <label for="use_abuseipdb"><strong>AbuseIPDB</strong> &mdash; Abuse score and reports</label>
+                    <label for="use_abuseipdb"><strong>AbuseIPDB</strong> &mdash; Abuse score and reports <span class="speed-badge speed-slow">slow</span></label>
                 </div>
                 {% if "abuseipdb" in cached_keys %}
                 <div class="cached">API key cached</div>
@@ -152,7 +157,7 @@
             <div class="provider">
                 <div class="provider-header">
                     <input type="checkbox" name="use_proxycheck" id="use_proxycheck" {% if "proxycheck" not in cached_keys %}onchange="toggleKey('proxycheck')"{% endif %}>
-                    <label for="use_proxycheck"><strong>proxycheck.io</strong> &mdash; Proxy/VPN detection</label>
+                    <label for="use_proxycheck"><strong>proxycheck.io</strong> &mdash; Proxy/VPN detection <span class="speed-badge speed-slow">slow</span></label>
                 </div>
                 {% if "proxycheck" in cached_keys %}
                 <div class="cached">API key cached</div>
@@ -169,6 +174,8 @@
 </div>
 
 <script>
+var DOWNLOAD_BASE = "{{ url_for('enrich_ip.download', filename='') }}";
+
 function toggleKey(provider) {
     var cb = document.getElementById('use_' + provider);
     var field = document.getElementById('key_' + provider);
@@ -251,7 +258,7 @@ function showResults(ev) {
         html += '</tr>';
     }
     html += '</tbody></table></div>';
-    html += '<div class="download"><a href="/download/' + encodeURIComponent(ev.filename) + '">Download CSV</a></div>';
+    html += '<div class="download"><a href="' + DOWNLOAD_BASE + encodeURIComponent(ev.filename) + '">Download CSV</a></div>';
     resultsSection.innerHTML = html;
     resultsSection.style.display = 'block';
 }
