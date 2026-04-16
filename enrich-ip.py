@@ -6,20 +6,16 @@ import sys
 from pathlib import Path
 
 from providers import create_providers, get_provider_classes
-from utils import ask_user_about_ip_field, generate_kml_file, print_ascii_table
+from utils import detect_csv, detect_ip_column, extract_ips_from_text, generate_kml_file, parse_excel_to_csv, print_ascii_table
 
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Enrich a list or CSV-file with IP-addresses with additional information. "
-                    "The list can be a plain text file with one IP on each line or a CSV-file "
-                    "where one field contains IP-adress. Additional services can be used to "
-                    "enrich the information, such as IP-DB, AbuseIP etc.")
-    parser.add_argument("--input-file", type=argparse.FileType("r"), required=True, help="Path to input txt or csv file containing IP addresses")
-    parser.add_argument("--csv-delimiter", type=str, default=";", help="Delimiter for input file (if csv), default ';'")
-    parser.add_argument("--csv-ip-field", type=int, help="Column index for IP address in CSV file")
-    parser.add_argument("--csv-delimiter-output", type=str, default=";", help="Delimiter for output csv file, default ';'")
+        description="Extract all IPv4/IPv6 addresses from any file and enrich them. "
+                    "Additional services can be used to enrich the information, such as IP-DB, AbuseIPDB etc.")
+    parser.add_argument("--input-file", type=argparse.FileType("rb"), required=True, help="Path to any file containing IP addresses (text, CSV, or Excel .xlsx)")
+    parser.add_argument("--delimiter-output", type=str, default=";", help="Delimiter for output csv file, default ';'")
     parser.add_argument("--generate-kml", action="store_true", default=False, help="Generate KML file with coordinates that can be imported to Google Earth")
     parser.add_argument("--ascii-output", action="store_true", default=False, help="Output as ASCII table to stdout instead of CSV file")
 
@@ -39,6 +35,30 @@ def main():
         print("Error: --generate-kml requires --use-ip-db", file=sys.stderr)
         sys.exit(1)
 
+    # Read the input file as bytes, try Excel parse, then decide CSV vs raw mode
+    raw_bytes = args.input_file.read()
+    content = parse_excel_to_csv(raw_bytes)
+    if content is not None:
+        print("Excel workbook detected; parsed to CSV.")
+    else:
+        content = raw_bytes.decode("utf-8", errors="replace")
+    csv_info = detect_csv(content)
+    csv_mode = False
+    if csv_info is not None:
+        in_delim, header_line, data_lines = csv_info
+        ip_col = detect_ip_column(data_lines, in_delim)
+        if ip_col is not None:
+            csv_mode = True
+
+    if csv_mode:
+        print(f"CSV detected (delimiter '{in_delim}', IP column index {ip_col}, {len(data_lines)} data rows).")
+    else:
+        ips = extract_ips_from_text(content)
+        if not ips:
+            print("Error: No IP addresses found in the input file.", file=sys.stderr)
+            sys.exit(1)
+        print(f"Found {len(ips)} unique IP address(es).")
+
     # Create and initialize providers
     providers = create_providers()
     enabled_providers = []
@@ -49,33 +69,16 @@ def main():
         if provider.enabled:
             enabled_providers.append(provider)
 
-    # Used if file is csv
-    is_csv = False
-    csv_input_header = "IP"
+    delim = args.delimiter_output
 
-    first_line = args.input_file.readline()
-    is_csv = args.csv_delimiter in first_line
-
-    if is_csv:
-        csv_input_header = first_line
-        input_file_lines = args.input_file.readlines()
-        if args.csv_ip_field is None:
-            args.csv_ip_field = ask_user_about_ip_field(csv_input_header.strip().strip(args.csv_delimiter), args.csv_delimiter)
-    else:
-        input_file_lines = [first_line] + args.input_file.readlines()
-
-    # Build output filename based on input file and create new output file
+    # Build output filename and open output file
     input_filename = Path(args.input_file.name)
     outfile = None
     output_filename = None
-    output_rows = []  # Used for ASCII output
+    output_rows = []
 
     if not args.ascii_output:
-        if input_filename.suffix.lower() == ".csv":
-            output_filename = input_filename.with_suffix(".out.csv")
-        else:
-            output_filename = input_filename.with_suffix(input_filename.suffix + ".out.csv")
-
+        output_filename = input_filename.with_suffix(".out.csv")
         try:
             outfile = open(output_filename, "w")
         except PermissionError:
@@ -85,65 +88,65 @@ def main():
             print(f"Error: Could not create output file: {output_filename} - {e}", file=sys.stderr)
             sys.exit(1)
 
-    # Build header for output csv file
-    csv_output_header = csv_input_header.replace(args.csv_delimiter, args.csv_delimiter_output).strip()
-
-    # Collect headers from enabled providers
+    # Collect provider header fields
+    provider_headers = []
     for provider in enabled_providers:
-        provider_headers = provider.get_headers()
-        if provider_headers:
-            csv_output_header = csv_output_header + args.csv_delimiter_output + args.csv_delimiter_output.join(provider_headers)
+        provider_headers.extend(provider.get_headers())
 
-    # Write header to output file or store for ASCII output
-    if csv_output_header:
-        if args.ascii_output:
-            output_rows.append(csv_output_header.split(args.csv_delimiter_output))
-        else:
-            outfile.write(csv_output_header + "\n")
+    # Build header
+    if csv_mode:
+        input_header_fields = [f.strip() for f in header_line.split(in_delim)]
+        header_parts = input_header_fields + provider_headers
+    else:
+        header_parts = ["IP"] + provider_headers
 
-    # Parse input file, line by line
-    total_lines = len(input_file_lines)
+    if args.ascii_output:
+        output_rows.append(header_parts)
+    else:
+        outfile.write(delim.join(header_parts) + "\n")
+
+    # Process rows
+    if csv_mode:
+        iterable = data_lines
+    else:
+        iterable = ips
+
+    total = len(iterable)
     last_progress = 0
-    for line_num, line in enumerate(input_file_lines, 1):
-        # Print progress every 10%
-        if total_lines > 0:
-            progress = (line_num * 100) // total_lines
-            if progress >= last_progress + 10:
-                last_progress = (progress // 10) * 10
-                print(f"Progress: {last_progress}%")
+    for i, item in enumerate(iterable, 1):
+        progress = (i * 100) // total
+        if progress >= last_progress + 10:
+            last_progress = (progress // 10) * 10
+            print(f"Progress: {last_progress}%")
 
-        line = line.strip(args.csv_delimiter).strip()
-        ip = None
-
-        if is_csv:
-            try:
-                ip = line.strip().split(args.csv_delimiter)[args.csv_ip_field]
-            except:
-                ip = ""
+        if csv_mode:
+            fields = [f.strip() for f in item.split(in_delim)]
+            ip = ""
+            for field in fields:
+                found = extract_ips_from_text(field)
+                if found:
+                    ip = found[0]
+                    break
+            row = list(fields)
         else:
-            ip = line.strip()
+            ip = item
+            row = [ip]
 
-        # Context dict for passing data between providers
         context = {}
-
-        # Enrich with each enabled provider
         for provider in enabled_providers:
             values = provider.enrich(ip, context)
             if values is not None:
-                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(values)
+                row.extend(values)
             else:
-                # Provider returned None (e.g., invalid IP), add empty values
-                empty_values = [""] * len(provider.get_headers())
-                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(empty_values)
+                row.extend([""] * len(provider.get_headers()))
 
-        # Collect location data for KML generation
         if 'location' in context:
             location_list.append(context['location'])
 
         if args.ascii_output:
-            output_rows.append(line.split(args.csv_delimiter_output))
+            output_rows.append(row)
         else:
-            outfile.write(line + "\n")
+            outfile.write(delim.join(row) + "\n")
 
     if args.ascii_output:
         print_ascii_table(output_rows)
@@ -151,7 +154,6 @@ def main():
         outfile.close()
         print(f"Output written to: {output_filename}")
 
-    # Generate KML file for Google Earth
     if args.generate_kml and location_list:
         kml_filename = input_filename.with_suffix(".kml")
         generate_kml_file(kml_filename, location_list)

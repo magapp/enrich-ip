@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app import app, build_args_from_form, get_cached_keys, process_file, TEMP_DIR
+from app import app, build_args_from_form, get_cached_keys, process_file, TEMP_DIR, DELIMITER
 
 
 @pytest.fixture
@@ -31,11 +31,7 @@ def parse_ndjson(data):
 class TestBuildArgsFromForm:
     def test_defaults(self):
         with app.test_request_context():
-            form = {}
-            args = build_args_from_form(form)
-            assert args.csv_delimiter == ";"
-            assert args.csv_delimiter_output == ";"
-            assert args.csv_ip_field is None
+            args = build_args_from_form({})
             assert args.generate_kml is False
             assert args.ascii_output is False
 
@@ -57,25 +53,6 @@ class TestBuildArgsFromForm:
             assert args.use_ipinfo is True
             assert args.use_ip_db is False
 
-    def test_csv_ip_field_parsed(self):
-        with app.test_request_context():
-            form = {"csv_ip_field": "2"}
-            args = build_args_from_form(form)
-            assert args.csv_ip_field == 2
-
-    def test_csv_ip_field_empty_string(self):
-        with app.test_request_context():
-            form = {"csv_ip_field": "  "}
-            args = build_args_from_form(form)
-            assert args.csv_ip_field is None
-
-    def test_custom_delimiters(self):
-        with app.test_request_context():
-            form = {"csv_delimiter": ",", "csv_delimiter_output": "\t"}
-            args = build_args_from_form(form)
-            assert args.csv_delimiter == ","
-            assert args.csv_delimiter_output == "\t"
-
     def test_api_keys_stripped(self):
         with app.test_request_context():
             form = {
@@ -96,9 +73,6 @@ class TestBuildArgsFromForm:
 class TestProcessFile:
     def _make_args(self, **overrides):
         defaults = dict(
-            csv_delimiter=";",
-            csv_delimiter_output=";",
-            csv_ip_field=None,
             generate_kml=False,
             ascii_output=False,
             use_ip_db=False, ip_db_key=None,
@@ -113,18 +87,24 @@ class TestProcessFile:
 
     def test_no_providers_selected(self):
         args = self._make_args()
-        output, error = process_file(["8.8.8.8"], args)
+        output, error = process_file("8.8.8.8", args)
         assert output is None
         assert "No providers selected" in error
 
+    def test_no_ips_found(self):
+        args = self._make_args(use_dnsbl=True)
+        output, error = process_file("no ips here at all", args)
+        assert output is None
+        assert "No IP addresses found" in error
+
     def test_dnsdumpster_without_ipinfo(self):
         args = self._make_args(use_dnsdumpster=True)
-        output, error = process_file(["8.8.8.8"], args)
+        output, error = process_file("8.8.8.8", args)
         assert output is None
         assert "DNSDumpster requires IPInfo" in error
 
     @patch("app.create_providers")
-    def test_plain_text_input(self, mock_create):
+    def test_extracts_ips_from_arbitrary_text(self, mock_create):
         provider = MagicMock()
         provider.name = "mock"
         provider.enabled = False
@@ -135,53 +115,137 @@ class TestProcessFile:
         mock_create.return_value = [provider]
 
         args = self._make_args(use_dnsbl=True)
-        output, error = process_file(["8.8.8.8", "1.1.1.1"], args)
+        content = "some log: connected from 8.8.8.8 and also 1.1.1.1 done"
+        output, error = process_file(content, args)
 
         assert error is None
-        assert len(output) == 3  # header + 2 data rows
+        assert len(output) == 3  # header + 2 IPs
         assert output[0] == "IP;Score"
         assert output[1] == "8.8.8.8;42"
         assert output[2] == "1.1.1.1;42"
 
     @patch("app.create_providers")
-    def test_csv_input(self, mock_create):
+    def test_deduplicates_ips(self, mock_create):
         provider = MagicMock()
         provider.name = "mock"
         provider.enabled = False
         provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
-        provider.get_headers.return_value = ["Hit"]
-        provider.enrich.return_value = ["yes"]
+        provider.get_headers.return_value = ["X"]
+        provider.enrich.return_value = ["1"]
 
         mock_create.return_value = [provider]
 
-        lines = ["host;ip;port", "server1;10.0.0.1;443", "server2;10.0.0.2;80"]
-        args = self._make_args(use_dnsbl=True, csv_ip_field=1)
-        output, error = process_file(lines, args)
+        args = self._make_args(use_dnsbl=True)
+        output, error = process_file("8.8.8.8 8.8.8.8 1.1.1.1 8.8.8.8", args)
 
         assert error is None
-        assert output[0] == "host;ip;port;Hit"
-        assert output[1] == "server1;10.0.0.1;443;yes"
+        assert len(output) == 3  # header + 2 unique IPs
 
     @patch("app.create_providers")
-    def test_csv_ip_field_defaults_to_zero(self, mock_create):
+    def test_csv_input_appends_enriched_columns(self, mock_create):
         provider = MagicMock()
         provider.name = "mock"
         provider.enabled = False
         provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
-        provider.get_headers.return_value = ["Col"]
-        provider.enrich.return_value = ["v"]
+        provider.get_headers.return_value = ["Score"]
+        provider.enrich.return_value = ["42"]
 
         mock_create.return_value = [provider]
 
-        lines = ["ip;name", "8.8.8.8;dns"]
-        args = self._make_args(use_dnsbl=True, csv_ip_field=None)
-        output, error = process_file(lines, args)
+        args = self._make_args(use_dnsbl=True)
+        csv_content = "host;ip;port\nserver1;8.8.8.8;443\nserver2;1.1.1.1;80\n"
+        output, error = process_file(csv_content, args)
 
         assert error is None
-        # csv_ip_field should have defaulted to 0
-        assert args.csv_ip_field == 0
-        # Provider was called with the IP from column 0
-        provider.enrich.assert_called_once_with("8.8.8.8", {})
+        assert output[0] == "host;ip;port;Score"
+        assert output[1] == "server1;8.8.8.8;443;42"
+        assert output[2] == "server2;1.1.1.1;80;42"
+
+    @patch("app.create_providers")
+    def test_csv_with_comma_delimiter(self, mock_create):
+        provider = MagicMock()
+        provider.name = "mock"
+        provider.enabled = False
+        provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
+        provider.get_headers.return_value = ["X"]
+        provider.enrich.return_value = ["ok"]
+
+        mock_create.return_value = [provider]
+
+        args = self._make_args(use_dnsbl=True)
+        csv_content = "ip,label\n8.8.8.8,dns\n1.1.1.1,cloudflare\n"
+        output, error = process_file(csv_content, args)
+
+        assert error is None
+        assert output[0] == "ip;label;X"
+        assert output[1] == "8.8.8.8;dns;ok"
+        provider.enrich.assert_any_call("8.8.8.8", {})
+        provider.enrich.assert_any_call("1.1.1.1", {})
+
+    @patch("app.create_providers")
+    def test_csv_extracts_ip_from_cell_with_surrounding_text(self, mock_create):
+        """CSV mode should pull the IP out of a cell even when it's embedded in text."""
+        provider = MagicMock()
+        provider.name = "mock"
+        provider.enabled = False
+        provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
+        provider.get_headers.return_value = ["Score"]
+        provider.enrich.return_value = ["42"]
+
+        mock_create.return_value = [provider]
+
+        args = self._make_args(use_dnsbl=True)
+        csv_content = "id;source\nevt1;connection from 8.8.8.8\nevt2;hit 1.1.1.1 port 443\n"
+        output, error = process_file(csv_content, args)
+
+        assert error is None
+        # Original rows preserved; enriched column appended
+        assert output[0] == "id;source;Score"
+        assert output[1] == "evt1;connection from 8.8.8.8;42"
+        assert output[2] == "evt2;hit 1.1.1.1 port 443;42"
+        # Provider was called with the IP extracted from the cell, not the full text
+        provider.enrich.assert_any_call("8.8.8.8", {})
+        provider.enrich.assert_any_call("1.1.1.1", {})
+
+    @patch("app.create_providers")
+    def test_csv_scans_all_cells_for_ip(self, mock_create):
+        """CSV mode should scan every cell in each row, not only the detected column."""
+        provider = MagicMock()
+        provider.name = "mock"
+        provider.enabled = False
+        provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
+        provider.get_headers.return_value = ["X"]
+        provider.enrich.return_value = ["ok"]
+
+        mock_create.return_value = [provider]
+
+        args = self._make_args(use_dnsbl=True)
+        # Row 1 has the IP in column 2 (note); row 2 has the IP in column 0 (name)
+        csv_content = "name;email;note\nalice;alice@example.com;hit from 8.8.8.8\n1.1.1.1;bob@example.com;nothing\n"
+        output, error = process_file(csv_content, args)
+
+        assert error is None
+        provider.enrich.assert_any_call("8.8.8.8", {})
+        provider.enrich.assert_any_call("1.1.1.1", {})
+
+    @patch("app.create_providers")
+    def test_csv_no_ip_anywhere_returns_error(self, mock_create):
+        """CSV with no IP-looking content anywhere should error with 'no IPs found'."""
+        provider = MagicMock()
+        provider.name = "mock"
+        provider.enabled = False
+        provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
+        provider.get_headers.return_value = ["X"]
+        provider.enrich.return_value = ["1"]
+
+        mock_create.return_value = [provider]
+
+        args = self._make_args(use_dnsbl=True)
+        csv_content = "name;note\nalice;hello\nbob;world\n"
+        output, error = process_file(csv_content, args)
+
+        assert output is None
+        assert "No IP addresses found" in error
 
     @patch("app.create_providers")
     def test_provider_returns_none(self, mock_create):
@@ -196,7 +260,7 @@ class TestProcessFile:
         mock_create.return_value = [provider]
 
         args = self._make_args(use_dnsbl=True)
-        output, error = process_file(["8.8.8.8"], args)
+        output, error = process_file("8.8.8.8", args)
 
         assert error is None
         assert output[1] == "8.8.8.8;;"
@@ -211,7 +275,7 @@ class TestProcessFile:
         mock_create.return_value = [provider]
 
         args = self._make_args(use_dnsbl=True)
-        output, error = process_file(["8.8.8.8"], args)
+        output, error = process_file("8.8.8.8", args)
 
         assert output is None
         assert "badprov" in error
@@ -225,46 +289,10 @@ class TestProcessFile:
         mock_create.return_value = [provider]
 
         args = self._make_args(use_dnsbl=True)
-        output, error = process_file(["8.8.8.8"], args)
+        output, error = process_file("8.8.8.8", args)
 
         assert output is None
         assert "exitprov" in error
-
-    @patch("app.create_providers")
-    def test_empty_lines_skipped(self, mock_create):
-        provider = MagicMock()
-        provider.name = "mock"
-        provider.enabled = False
-        provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
-        provider.get_headers.return_value = ["X"]
-        provider.enrich.return_value = ["1"]
-
-        mock_create.return_value = [provider]
-
-        args = self._make_args(use_dnsbl=True)
-        output, error = process_file(["8.8.8.8", "", "  ", "1.1.1.1"], args)
-
-        assert error is None
-        # header + 2 non-empty data rows
-        assert len(output) == 3
-
-    @patch("app.create_providers")
-    def test_custom_output_delimiter(self, mock_create):
-        provider = MagicMock()
-        provider.name = "mock"
-        provider.enabled = False
-        provider.initialize.side_effect = lambda args: setattr(provider, 'enabled', True) or True
-        provider.get_headers.return_value = ["Score"]
-        provider.enrich.return_value = ["5"]
-
-        mock_create.return_value = [provider]
-
-        args = self._make_args(use_dnsbl=True, csv_delimiter_output=",")
-        output, error = process_file(["8.8.8.8"], args)
-
-        assert error is None
-        assert output[0] == "IP,Score"
-        assert output[1] == "8.8.8.8,5"
 
     @patch("app.create_providers")
     def test_progress_callback_called(self, mock_create):
@@ -282,11 +310,11 @@ class TestProcessFile:
             events.append((event, data))
 
         args = self._make_args(use_dnsbl=True)
-        process_file(["8.8.8.8", "1.1.1.1"], args, progress_callback=callback)
+        process_file("8.8.8.8 1.1.1.1", args, progress_callback=callback)
 
         status_events = [e for e in events if e[0] == "status"]
         progress_events = [e for e in events if e[0] == "progress"]
-        assert len(status_events) == 1
+        assert len(status_events) >= 1
         assert len(progress_events) == 2
         assert progress_events[0][1] == {"current": 1, "total": 2}
         assert progress_events[1][1] == {"current": 2, "total": 2}
@@ -304,7 +332,7 @@ class TestProcessFile:
 
         cb = lambda event, data: None
         args = self._make_args(use_dnsbl=True)
-        process_file(["8.8.8.8"], args, progress_callback=cb)
+        process_file("8.8.8.8", args, progress_callback=cb)
 
         assert provider.progress_callback is cb
 
@@ -315,13 +343,13 @@ class TestProcessFile:
 
 class TestIndexRoute:
     def test_get_index(self, client):
-        resp = client.get("/")
+        resp = client.get("/enrich-ip/")
         assert resp.status_code == 200
         assert b"enrich-ip" in resp.data
         assert b"input_file" in resp.data
 
     def test_index_contains_provider_checkboxes(self, client):
-        resp = client.get("/")
+        resp = client.get("/enrich-ip/")
         html = resp.data.decode()
         assert 'name="use_dnsbl"' in html
         assert 'name="use_ip_db"' in html
@@ -331,7 +359,7 @@ class TestIndexRoute:
         assert 'name="use_proxycheck"' in html
 
     def test_index_has_progress_bar(self, client):
-        resp = client.get("/")
+        resp = client.get("/enrich-ip/")
         html = resp.data.decode()
         assert 'id="progress-section"' in html
         assert 'id="progress-fill"' in html
@@ -357,7 +385,7 @@ class TestCachedKeys:
 
     def test_index_shows_cached_note(self, client):
         with patch("app.get_cached_keys", return_value={"abuseipdb", "proxycheck"}):
-            resp = client.get("/")
+            resp = client.get("/enrich-ip/")
         html = resp.data.decode()
         # Cached providers should show "API key cached" instead of input
         assert 'name="abuseipdb_api"' not in html
@@ -367,7 +395,7 @@ class TestCachedKeys:
 
     def test_index_shows_input_when_not_cached(self, client):
         with patch("app.get_cached_keys", return_value=set()):
-            resp = client.get("/")
+            resp = client.get("/enrich-ip/")
         html = resp.data.decode()
         assert 'name="ip_db_key"' in html
         assert 'name="abuseipdb_api"' in html
@@ -376,7 +404,7 @@ class TestCachedKeys:
 
 class TestEnrichRoute:
     def test_no_file_returns_error_event(self, client):
-        resp = client.post("/enrich", data={})
+        resp = client.post("/enrich-ip/enrich", data={})
         assert resp.status_code == 200
         events = parse_ndjson(resp.data)
         assert events[0]["event"] == "error"
@@ -384,7 +412,7 @@ class TestEnrichRoute:
 
     def test_empty_file_returns_error_event(self, client):
         data = {"input_file": (io.BytesIO(b""), "empty.txt")}
-        resp = client.post("/enrich", data=data, content_type="multipart/form-data")
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
         events = parse_ndjson(resp.data)
         assert events[-1]["event"] == "error"
         assert "empty" in events[-1]["message"].lower()
@@ -393,7 +421,7 @@ class TestEnrichRoute:
         data = {
             "input_file": (io.BytesIO(b"8.8.8.8\n"), "test.txt"),
         }
-        resp = client.post("/enrich", data=data, content_type="multipart/form-data")
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
         events = parse_ndjson(resp.data)
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
@@ -407,7 +435,7 @@ class TestEnrichRoute:
             "input_file": (io.BytesIO(b"8.8.8.8\n"), "test.txt"),
             "use_dnsbl": "on",
         }
-        resp = client.post("/enrich", data=data, content_type="multipart/form-data")
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
         assert resp.status_code == 200
         events = parse_ndjson(resp.data)
         done_events = [e for e in events if e["event"] == "done"]
@@ -424,21 +452,46 @@ class TestEnrichRoute:
             "input_file": (io.BytesIO(b"8.8.8.8\n"), "test.txt"),
             "use_dnsbl": "on",
         }
-        resp = client.post("/enrich", data=data, content_type="multipart/form-data")
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
         events = parse_ndjson(resp.data)
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
         assert "Something broke" in error_events[0]["message"]
 
+    @patch("app.process_file")
+    def test_excel_upload_parsed_to_csv(self, mock_process, client, tmp_path):
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["host", "ip"])
+        ws.append(["server1", "8.8.8.8"])
+        path = tmp_path / "test.xlsx"
+        wb.save(path)
+
+        mock_process.return_value = (["host;ip;Score", "server1;8.8.8.8;42"], None)
+
+        data = {
+            "input_file": (io.BytesIO(path.read_bytes()), "test.xlsx"),
+            "use_dnsbl": "on",
+        }
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
+        assert resp.status_code == 200
+        # process_file should have been called with CSV-text content derived from the xlsx
+        call_args = mock_process.call_args
+        content_arg = call_args[0][0]
+        assert "host;ip" in content_arg
+        assert "server1;8.8.8.8" in content_arg
+
     def test_response_is_ndjson(self, client):
         data = {"input_file": (io.BytesIO(b"8.8.8.8\n"), "test.txt")}
-        resp = client.post("/enrich", data=data, content_type="multipart/form-data")
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
         assert "application/x-ndjson" in resp.content_type
 
     @patch("app.process_file")
     def test_streaming_includes_progress_events(self, mock_process, client):
         """When process_file calls the callback, progress events appear in the stream."""
-        def fake_process(input_lines, args, progress_callback=None):
+        def fake_process(content, args, progress_callback=None):
             if progress_callback:
                 progress_callback("status", {"message": "Working..."})
                 progress_callback("progress", {"current": 1, "total": 2})
@@ -451,7 +504,7 @@ class TestEnrichRoute:
             "input_file": (io.BytesIO(b"8.8.8.8\n1.1.1.1\n"), "test.txt"),
             "use_dnsbl": "on",
         }
-        resp = client.post("/enrich", data=data, content_type="multipart/form-data")
+        resp = client.post("/enrich-ip/enrich", data=data, content_type="multipart/form-data")
         events = parse_ndjson(resp.data)
 
         event_types = [e["event"] for e in events]
@@ -468,7 +521,7 @@ class TestDownloadRoute:
         with open(path, "w") as f:
             f.write("IP;Score\n8.8.8.8;0\n")
 
-        resp = client.get(f"/download/{filename}")
+        resp = client.get(f"/enrich-ip/download/{filename}")
         assert resp.status_code == 200
         assert b"IP;Score" in resp.data
         assert resp.headers["Content-Disposition"] == "attachment; filename=enriched.csv"
@@ -476,7 +529,7 @@ class TestDownloadRoute:
         os.unlink(path)
 
     def test_download_missing_file_404(self, client):
-        resp = client.get("/download/nonexistent.csv")
+        resp = client.get("/enrich-ip/download/nonexistent.csv")
         assert resp.status_code == 404
 
 
@@ -501,6 +554,123 @@ class TestUtils:
         assert is_private_ip("10.0.0.1") is True
         assert is_private_ip("8.8.8.8") is False
         assert is_private_ip("garbage") is False
+
+    def test_extract_ips_from_text_ipv4(self):
+        from utils import extract_ips_from_text
+        result = extract_ips_from_text("connect from 8.8.8.8 and 1.1.1.1")
+        assert result == ["8.8.8.8", "1.1.1.1"]
+
+    def test_extract_ips_deduplicates(self):
+        from utils import extract_ips_from_text
+        result = extract_ips_from_text("8.8.8.8 8.8.8.8 1.1.1.1")
+        assert result == ["8.8.8.8", "1.1.1.1"]
+
+    def test_extract_ips_preserves_order(self):
+        from utils import extract_ips_from_text
+        result = extract_ips_from_text("first: 1.2.3.4 then: 5.6.7.8")
+        assert result == ["1.2.3.4", "5.6.7.8"]
+
+    def test_extract_ips_empty_text(self):
+        from utils import extract_ips_from_text
+        assert extract_ips_from_text("no addresses here") == []
+
+    def test_extract_ips_ipv6(self):
+        from utils import extract_ips_from_text
+        result = extract_ips_from_text("addr: 2001:db8::1 end")
+        assert "2001:db8::1" in result
+
+    def test_extract_ips_mixed_content(self):
+        from utils import extract_ips_from_text
+        text = "Jan 01 log[123]: src=8.8.8.8 dst=1.1.1.1 port=443"
+        result = extract_ips_from_text(text)
+        assert "8.8.8.8" in result
+        assert "1.1.1.1" in result
+
+    def test_detect_csv_semicolon(self):
+        from utils import detect_csv
+        result = detect_csv("a;b;c\n1;2;3\n")
+        assert result is not None
+        delim, header, data = result
+        assert delim == ";"
+        assert header == "a;b;c"
+        assert data == ["1;2;3"]
+
+    def test_detect_csv_comma(self):
+        from utils import detect_csv
+        result = detect_csv("a,b\n1,2\n")
+        assert result is not None
+        assert result[0] == ","
+
+    def test_detect_csv_not_csv(self):
+        from utils import detect_csv
+        assert detect_csv("just one line\n") is None
+        assert detect_csv("no delimiters\nat all\n") is None
+
+    def test_detect_ip_column_finds_ip_col(self):
+        from utils import detect_ip_column
+        rows = ["server1;8.8.8.8;443", "server2;1.1.1.1;80"]
+        assert detect_ip_column(rows, ";") == 1
+
+    def test_detect_ip_column_no_ip_returns_none(self):
+        from utils import detect_ip_column
+        rows = ["alice;hello", "bob;world"]
+        assert detect_ip_column(rows, ";") is None
+
+    def test_detect_ip_column_finds_ip_embedded_in_text(self):
+        from utils import detect_ip_column
+        rows = [
+            "evt1;connection from 8.8.8.8 port 443",
+            "evt2;request to 1.1.1.1 failed",
+        ]
+        assert detect_ip_column(rows, ";") == 1
+
+    def test_parse_excel_non_xlsx_returns_none(self):
+        from utils import parse_excel_to_csv
+        assert parse_excel_to_csv(b"just plain text") is None
+        assert parse_excel_to_csv(b"") is None
+
+    def test_parse_excel_xlsx_roundtrip(self, tmp_path):
+        import openpyxl
+        from utils import parse_excel_to_csv
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["host", "ip", "port"])
+        ws.append(["server1", "8.8.8.8", 443])
+        ws.append(["server2", "1.1.1.1", 80])
+        path = tmp_path / "test.xlsx"
+        wb.save(path)
+
+        content = parse_excel_to_csv(path.read_bytes())
+        assert content is not None
+        lines = content.strip().splitlines()
+        assert lines[0] == "host;ip;port"
+        assert lines[1] == "server1;8.8.8.8;443"
+        assert lines[2] == "server2;1.1.1.1;80"
+
+    def test_parse_excel_sanitises_delimiter_in_cells(self, tmp_path):
+        import openpyxl
+        from utils import parse_excel_to_csv
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["ip", "note"])
+        ws.append(["8.8.8.8", "has;semicolon and\nnewline"])
+        path = tmp_path / "test.xlsx"
+        wb.save(path)
+
+        content = parse_excel_to_csv(path.read_bytes())
+        assert content is not None
+        lines = content.strip().splitlines()
+        # semicolons and newlines inside cells are replaced with spaces,
+        # so splitting on ';' still yields exactly 2 fields per row
+        assert len(lines) == 2
+        assert lines[0].split(";") == ["ip", "note"]
+        assert lines[1].split(";")[0] == "8.8.8.8"
+        note_field = lines[1].split(";")[1]
+        assert "semicolon" in note_field
+        assert "newline" in note_field
+        assert "\n" not in note_field
 
 
 # ---------------------------------------------------------------------------

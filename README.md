@@ -2,18 +2,20 @@
 
 A tool to enrich IP addresses with additional information from various sources. Available as both a command-line tool and a web application.
 
-If you have a list of IP-adresses in a text file or CSV-file, you can run enrich-ip. With help from the sources listed below,
-a new CSV-file will be generated with additional columns containting more information about the addresses.
+Give enrich-ip any file containing IP addresses — plain text, log files, CSVs, or Excel workbooks — and it will find every IPv4 and IPv6 address inside and enrich them with data from the providers listed below. The result is a CSV file you can open in any spreadsheet app.
 
-Note that if you use enrich-ip as a forensic tool, some of the services will cause an external API call, meaning that you could expose your own IP address in combination with the IP you're interesstd in.
+- **CSV and Excel (`.xlsx`) input with an IP-address column**: the original rows are preserved and the enrichment columns are appended. Both `;` and `,` delimiters are auto-detected, and the IP column is found by scanning the first rows for values that parse as IP addresses.
+- **Any other file**: all IPv4 and IPv6 addresses are extracted from the raw text, deduplicated, and written to a fresh CSV.
 
-IP-DB is a database that is downloaded locally so with this one you can probe as much as you want without exposing yourself.
+Note that if you use enrich-ip as a forensic tool, some of the services will cause an external API call, meaning that you could expose your own IP address in combination with the IP you're interested in.
 
-Also note that some of the services requires an API-key.
+IP-DB is a database that is downloaded locally so with this one you can probe as much as you want without exposing yourself. The web UI marks IP-DB as **fast** and all other providers as **slow** so you know what to expect.
 
-Enrich-ip is module based, so each service is defined as a "provider" in the the code. You can add your own providers easy by adding a new module.
+Some of the services require an API key.
 
-For example, you have a text file with IP-adresses, like this:
+Enrich-ip is module based, so each service is defined as a "provider" in the code. You can add your own providers easily by adding a new module.
+
+For example, you have a text file with IP-addresses, like this:
 
 ```
 195.26.255.37
@@ -63,7 +65,7 @@ The output would be a CSV file like this  (you may need to scroll to the right t
 | 4.223.174.255   | Sweden          | Gävle                             | Corporate | Microsoft Corporation            | 8075   | Microsoft Corporation           |           | 0           |                                        |         | 0           | 0             | SE            |
 | 185.223.152.104 | United States   | Los Angeles                       | Cellular  | Latitude.sh                      | 396356 | Latitude.sh                     |           | 0           |                                        |         | 100         | 127           | US            |
 
-You can also supply a CSV file with columns, then enrich-ip will add more columns. Note that input CSV file must have its first line as a header row. This is useful, for example, if you have a CSV file generated from another tool with IP adress and text or log info. More columns will be added. Enrich-ip will automatically detect if the input file is a text file or CSV file.
+You can also supply a CSV file (with a header row) or an Excel `.xlsx` workbook where one column contains IP addresses. Enrich-ip auto-detects the delimiter and IP column, preserves the original rows, and appends the enrichment columns. This is useful when you have data generated from another tool — for example, an IP address alongside log info or transaction metadata. Drop any file into the tool and it does the right thing.
 
 ## Features
 
@@ -102,7 +104,7 @@ python app.py
 # Build image
 docker compose build
 
-# Run the web app (available at http://localhost:5000)
+# Run the web app (available at http://localhost:5001)
 docker compose up web
 
 # Run CLI with arguments
@@ -119,12 +121,11 @@ The web interface provides the same enrichment capabilities through a browser.
 python app.py
 ```
 
-Then open http://localhost:5000. With Docker: `docker compose up web` and open http://localhost:5000.
+Then open http://localhost:5001. With Docker: `docker compose up web` and open http://localhost:5001.
 
 The web form lets you:
-- Upload a `.txt` or `.csv` file (up to 16 MB)
-- Configure CSV input/output delimiters and IP column index
-- Select which providers to use and enter API keys
+- Upload any file (up to 16 MB) — text, log files, CSV, or Excel `.xlsx`
+- Select which providers to use and enter API keys (IP-DB is marked **fast**; all remote-API providers are marked **slow**)
 - Watch real-time progress as IPs are processed (progress bar with per-IP status)
 - View enrichment results in an interactive table directly in the browser
 - Download the enriched CSV file
@@ -139,15 +140,11 @@ python enrich-ip.py --input-file <file> [options]
 
 ### Required arguments
 
-`--input-file` - Path to input txt or csv file containing IP addresses
+`--input-file` - Path to any file containing IP addresses (text, CSV, or Excel `.xlsx`)
 
 ### Optional arguments
 
-`--csv-delimiter` - Delimiter for input file (default: `;`)
-
-`--csv-ip-field` - Column index for IP address in CSV file
-
-`--csv-delimiter-output` - Delimiter for output CSV file (default: `;`)
+`--delimiter-output` - Delimiter for output CSV file (default: `;`)
 
 `--use-ip-db` - Use IP database for geolocation enrichment
 
@@ -206,11 +203,13 @@ python enrich-ip.py --input-file ips.txt --use-proxycheck --proxycheck-api YOUR_
 python enrich-ip.py --input-file ips.txt --use-proxycheck --ascii-output
 ```
 
-### Process CSV with custom delimiter
+### Enrich a CSV or Excel file (original columns preserved)
 
 ```bash
-python enrich-ip.py --input-file data.csv --csv-delimiter "," --csv-delimiter-output "," --use-dnsbl
+python enrich-ip.py --input-file transactions.xlsx --use-dnsbl --use-ip-db
 ```
+
+The delimiter (`;` or `,`) and the IP-address column are detected automatically. The enriched columns are appended to the original rows in the output `.out.csv`.
 
 ## Output
 

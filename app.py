@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import Flask, Blueprint, Response, redirect, render_template, request, send_from_directory, stream_with_context, url_for
 
 from providers import create_providers, get_provider_classes
+from utils import detect_csv, detect_ip_column, extract_ips_from_text, parse_excel_to_csv
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -38,12 +39,6 @@ def build_args_from_form(form):
     """Convert Flask form data into a namespace matching argparse output."""
     args = types.SimpleNamespace()
 
-    # CSV settings
-    args.csv_delimiter = form.get("csv_delimiter", ";") or ";"
-    args.csv_delimiter_output = form.get("csv_delimiter_output", ";") or ";"
-    csv_ip_field = form.get("csv_ip_field", "")
-    args.csv_ip_field = int(csv_ip_field) if csv_ip_field.strip() else None
-
     # Not used in web mode but providers may check these
     args.generate_kml = False
     args.ascii_output = False
@@ -68,8 +63,11 @@ def build_args_from_form(form):
     return args
 
 
-def process_file(input_lines, args, progress_callback=None):
-    """Process input lines through enabled providers, return (output_lines, error).
+DELIMITER = ";"
+
+
+def process_file(content, args, progress_callback=None):
+    """Extract IPs from arbitrary content, enrich them, return (output_lines, error).
 
     output_lines is a list of strings (including the header line).
     error is a string message or None.
@@ -82,6 +80,23 @@ def process_file(input_lines, args, progress_callback=None):
     # Pre-validate DNSDumpster dependency on IPInfo
     if args.use_dnsdumpster and not args.use_ipinfo:
         return None, "DNSDumpster requires IPInfo to be enabled."
+
+    # Detect whether this is a CSV file with an identifiable IP column.
+    # If so, we preserve the original rows and append enriched columns.
+    report("status", "Analysing input file...")
+    csv_info = detect_csv(content)
+    csv_mode = False
+    if csv_info is not None:
+        in_delim, header_line, data_lines = csv_info
+        ip_col = detect_ip_column(data_lines, in_delim)
+        if ip_col is not None:
+            csv_mode = True
+
+    if not csv_mode:
+        # Fall back to extracting IPs from arbitrary text
+        ips = extract_ips_from_text(content)
+        if not ips:
+            return None, "No IP addresses found in the uploaded file."
 
     # Create and initialize providers
     providers = create_providers()
@@ -102,59 +117,50 @@ def process_file(input_lines, args, progress_callback=None):
     if not enabled_providers:
         return None, "No providers selected."
 
-    # Detect CSV vs plain text
-    is_csv = False
-    csv_input_header = "IP"
-
-    first_line = input_lines[0]
-    is_csv = args.csv_delimiter in first_line
-
-    if is_csv:
-        csv_input_header = first_line
-        data_lines = input_lines[1:]
-        if args.csv_ip_field is None:
-            args.csv_ip_field = 0  # Default to first column in web mode
-    else:
-        data_lines = input_lines
-
-    # Build output header
-    csv_output_header = csv_input_header.replace(args.csv_delimiter, args.csv_delimiter_output).strip()
-
+    provider_headers = []
     for provider in enabled_providers:
-        provider_headers = provider.get_headers()
-        if provider_headers:
-            csv_output_header = csv_output_header + args.csv_delimiter_output + args.csv_delimiter_output.join(provider_headers)
+        provider_headers.extend(provider.get_headers())
 
-    output_lines = [csv_output_header]
+    if csv_mode:
+        # Preserve the original CSV header and rows; append enriched columns.
+        # Rejoin fields with DELIMITER in the output.
+        input_header_fields = [f.strip() for f in header_line.split(in_delim)]
+        output_lines = [DELIMITER.join(input_header_fields + provider_headers)]
 
-    # Process each line
-    total = len(data_lines)
-    for i, line in enumerate(data_lines):
-        line = line.strip(args.csv_delimiter).strip()
-        if not line:
-            continue
-
-        report("progress", {"current": i + 1, "total": total})
-
-        if is_csv:
-            try:
-                ip = line.strip().split(args.csv_delimiter)[args.csv_ip_field]
-            except (IndexError, TypeError):
-                ip = ""
-        else:
-            ip = line.strip()
-
-        context = {}
-
-        for provider in enabled_providers:
-            values = provider.enrich(ip, context)
-            if values is not None:
-                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(values)
-            else:
-                empty_values = [""] * len(provider.get_headers())
-                line = line + args.csv_delimiter_output + args.csv_delimiter_output.join(empty_values)
-
-        output_lines.append(line)
+        total = len(data_lines)
+        for i, line in enumerate(data_lines):
+            report("progress", {"current": i + 1, "total": total})
+            fields = [f.strip() for f in line.split(in_delim)]
+            ip = ""
+            for field in fields:
+                found = extract_ips_from_text(field)
+                if found:
+                    ip = found[0]
+                    break
+            context = {}
+            enriched = []
+            for provider in enabled_providers:
+                values = provider.enrich(ip, context)
+                if values is not None:
+                    enriched.extend(values)
+                else:
+                    enriched.extend([""] * len(provider.get_headers()))
+            output_lines.append(DELIMITER.join(fields + enriched))
+    else:
+        # Non-CSV: build a fresh CSV keyed on the extracted IPs.
+        output_lines = [DELIMITER.join(["IP"] + provider_headers)]
+        total = len(ips)
+        for i, ip in enumerate(ips):
+            report("progress", {"current": i + 1, "total": total})
+            context = {}
+            row = [ip]
+            for provider in enabled_providers:
+                values = provider.enrich(ip, context)
+                if values is not None:
+                    row.extend(values)
+                else:
+                    row.extend([""] * len(provider.get_headers()))
+            output_lines.append(DELIMITER.join(row))
 
     return output_lines, None
 
@@ -184,15 +190,25 @@ def enrich():
         )
 
     try:
-        content = uploaded.read().decode("utf-8", errors="replace")
+        raw_bytes = uploaded.read()
     except Exception as e:
         return Response(
             _ndjson_line({"event": "error", "message": f"Could not read file: {e}"}),
             content_type="application/x-ndjson",
         )
 
-    input_lines = [l for l in content.splitlines() if l.strip()]
-    if not input_lines:
+    if not raw_bytes:
+        return Response(
+            _ndjson_line({"event": "error", "message": "Uploaded file is empty."}),
+            content_type="application/x-ndjson",
+        )
+
+    # If the file is an Excel workbook, parse it to CSV text; otherwise decode as UTF-8
+    content = parse_excel_to_csv(raw_bytes)
+    if content is None:
+        content = raw_bytes.decode("utf-8", errors="replace")
+
+    if not content.strip():
         return Response(
             _ndjson_line({"event": "error", "message": "Uploaded file is empty."}),
             content_type="application/x-ndjson",
@@ -211,7 +227,7 @@ def enrich():
 
     def worker():
         result_holder[0], result_holder[1] = process_file(
-            input_lines, args, progress_callback=on_progress
+            content, args, progress_callback=on_progress
         )
         progress_queue.put(None)  # sentinel
 
@@ -237,9 +253,8 @@ def enrich():
             with open(result_path, "w") as f:
                 f.write("\n".join(output_lines) + "\n")
 
-            delimiter = args.csv_delimiter_output
-            headers = output_lines[0].split(delimiter)
-            rows = [line.split(delimiter) for line in output_lines[1:]]
+            headers = output_lines[0].split(DELIMITER)
+            rows = [line.split(DELIMITER) for line in output_lines[1:]]
 
             yield _ndjson_line({
                 "event": "done",

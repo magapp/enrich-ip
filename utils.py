@@ -1,6 +1,120 @@
 """Shared utilities for enrich-ip."""
 
 import ipaddress
+import re
+
+# IPv4: strict dotted-decimal
+_IPV4_RE = re.compile(
+    r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
+    r'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+)
+
+# IPv6: broad pattern (at least two colon-separated hex groups), validated below
+_IPV6_RE = re.compile(
+    r'(?<![:\w])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![:\w])'
+)
+
+
+def parse_excel_to_csv(data_bytes, delimiter=";"):
+    """If data_bytes is an .xlsx Excel file, return it rendered as CSV text.
+
+    Returns None if the data is not an Excel file or cannot be parsed.
+    The first sheet is used. Cell values are stringified; any occurrences
+    of the delimiter or newlines inside cells are replaced with spaces so
+    the resulting CSV text can be parsed with a simple split.
+    """
+    if not data_bytes.startswith(b"PK\x03\x04"):
+        return None
+    try:
+        import io
+        import openpyxl
+    except ImportError:
+        return None
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(data_bytes), read_only=True, data_only=True)
+    except Exception:
+        return None
+    try:
+        ws = wb.active
+        if ws is None:
+            return None
+        lines = []
+        for row in ws.iter_rows(values_only=True):
+            fields = []
+            for cell in row:
+                if cell is None:
+                    fields.append("")
+                else:
+                    s = str(cell).replace(delimiter, " ").replace("\n", " ").replace("\r", " ").strip()
+                    fields.append(s)
+            # Skip fully empty rows
+            if any(f for f in fields):
+                lines.append(delimiter.join(fields))
+        if not lines:
+            return None
+        return "\n".join(lines) + "\n"
+    finally:
+        wb.close()
+
+
+def detect_csv(content):
+    """Detect if content is a CSV file.
+
+    Returns (delimiter, header_line, data_lines) if it looks like CSV,
+    or None if not.
+    """
+    lines = [l for l in content.splitlines() if l.strip()]
+    if len(lines) < 2:
+        return None
+    first = lines[0]
+    for delim in [";", ","]:
+        parts = first.split(delim)
+        if len(parts) >= 2:
+            return delim, lines[0], lines[1:]
+    return None
+
+
+def detect_ip_column(data_lines, delimiter):
+    """Return the index of the column most likely containing IP addresses.
+
+    A cell counts as containing an IP if at least one IPv4/IPv6 address can be
+    extracted from its text, so cells with surrounding text (e.g. "src=8.8.8.8")
+    still match. Scans up to the first 20 data rows. Returns None if nothing matches.
+    """
+    col_scores: dict[int, int] = {}
+    for line in data_lines[:20]:
+        fields = line.split(delimiter)
+        for i, field in enumerate(fields):
+            if extract_ips_from_text(field):
+                col_scores[i] = col_scores.get(i, 0) + 1
+    if not col_scores:
+        return None
+    return max(col_scores, key=lambda k: col_scores[k])
+
+
+def extract_ips_from_text(text):
+    """Extract all unique IPv4 and IPv6 addresses from arbitrary text.
+
+    Returns a list of normalised IP strings in document order.
+    """
+    candidates = []
+    for m in _IPV4_RE.finditer(text):
+        candidates.append((m.start(), m.group()))
+    for m in _IPV6_RE.finditer(text):
+        candidates.append((m.start(), m.group()))
+    candidates.sort(key=lambda x: x[0])
+
+    seen = set()
+    result = []
+    for _, raw in candidates:
+        try:
+            ip = str(ipaddress.ip_address(raw))
+        except ValueError:
+            continue
+        if ip not in seen:
+            seen.add(ip)
+            result.append(ip)
+    return result
 
 
 def is_valid_public_ip(ip_string):
