@@ -120,7 +120,11 @@ class IPDBProvider(BaseProvider):
             print(f"Skipping invalid or non-public IP: '{ip}'")
             return None
 
-        res = self.db.enterprise(ip)
+        try:
+          res = self.db.enterprise(ip)
+        except:
+          print(f"Error looking up {ip}, ignore")
+          return None
         values = [
             str(res.country.names.get("en", "")).replace("None", ""),
             str(res.city.names.get("en", "")).replace("None", ""),
